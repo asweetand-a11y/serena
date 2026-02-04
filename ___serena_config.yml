@@ -94,4 +94,4 @@ token_count_estimator: CHAR_COUNT
 
 #указать зарегистрированные проекты
 projects:
-- D:\app\Serena
+- D:\<путь к папке проекта>
