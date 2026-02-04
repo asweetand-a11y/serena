@@ -204,7 +204,6 @@ pylint.html
 .serena/
 .cursor/
 AGENTS.md
-.cache-bsl/
 
 # clojure-lsp temporary files
 .calva/
