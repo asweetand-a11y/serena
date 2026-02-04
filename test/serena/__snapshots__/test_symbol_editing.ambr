@@ -1,0 +1,1209 @@
+# serializer version: 1
+# name: test_delete_symbol[test_case0]
+  '''
+  """
+  Test module for variable declarations and usage.
+  
+  This module tests various types of variable declarations and usages including:
+  - Module-level variables
+  - Class-level variables
+  - Instance variables
+  - Variable reassignments
+  """
+  
+  from dataclasses import dataclass, field
+  
+  # Module-level variables
+  module_var = "Initial module value"
+  
+  reassignable_module_var = 10
+  reassignable_module_var = 20  # Reassigned
+  
+  # Module-level variable with type annotation
+  typed_module_var: int = 42
+  
+  
+  # Regular class with class and instance variables
+  
+  
+  
+  # Dataclass with variables
+  @dataclass
+  class VariableDataclass:
+      """Dataclass that contains various fields."""
+  
+      # Field variables with type annotations
+      id: int
+      name: str
+      items: list[str] = field(default_factory=list)
+      metadata: dict[str, str] = field(default_factory=dict)
+      optional_value: float | None = None
+  
+      # This will be reassigned in various places
+      status: str = "pending"
+  
+  
+  # Function that uses the module variables
+  def use_module_variables():
+      """Function that uses module-level variables."""
+      result = module_var + " used in function"
+      other_result = reassignable_module_var * 2
+      return result, other_result
+  
+  
+  # Create instances and use variables
+  dataclass_instance = VariableDataclass(id=1, name="Test")
+  dataclass_instance.status = "active"  # Reassign dataclass field
+  
+  # Use variables at module level
+  module_result = module_var + " used at module level"
+  other_module_result = reassignable_module_var + 30
+  
+  # Create a second dataclass instance with different status
+  second_dataclass = VariableDataclass(id=2, name="Another Test")
+  second_dataclass.status = "completed"  # Another reassignment of status
+  
+  '''
+# ---
+# name: test_delete_symbol[test_case1]
+  '''
+  
+  
+  export function helperFunction() {
+      const demo = new DemoClass(42);
+      demo.printValue();
+  }
+  
+  helperFunction();
+  
+  '''
+# ---
+# name: test_insert_in_rel_to_symbol[test_case0-after]
+  '''
+  """
+  Test module for variable declarations and usage.
+  
+  This module tests various types of variable declarations and usages including:
+  - Module-level variables
+  - Class-level variables
+  - Instance variables
+  - Variable reassignments
+  """
+  
+  from dataclasses import dataclass, field
+  
+  # Module-level variables
+  module_var = "Initial module value"
+  
+  reassignable_module_var = 10
+  reassignable_module_var = 20  # Reassigned
+  
+  # Module-level variable with type annotation
+  typed_module_var: int = 42
+  new_module_var = "Inserted after typed_module_var"
+  
+  
+  # Regular class with class and instance variables
+  class VariableContainer:
+      """Class that contains various variables."""
+  
+      # Class-level variables
+      class_var = "Initial class value"
+  
+      reassignable_class_var = True
+      reassignable_class_var = False  # Reassigned #noqa: PIE794
+  
+      # Class-level variable with type annotation
+      typed_class_var: str = "typed value"
+  
+      def __init__(self):
+          # Instance variables
+          self.instance_var = "Initial instance value"
+          self.reassignable_instance_var = 100
+  
+          # Instance variable with type annotation
+          self.typed_instance_var: list[str] = ["item1", "item2"]
+  
+      def modify_instance_var(self):
+          # Reassign instance variable
+          self.instance_var = "Modified instance value"
+          self.reassignable_instance_var = 200  # Reassigned
+  
+      def use_module_var(self):
+          # Use module-level variables
+          result = module_var + " used in method"
+          other_result = reassignable_module_var + 5
+          return result, other_result
+  
+      def use_class_var(self):
+          # Use class-level variables
+          result = VariableContainer.class_var + " used in method"
+          other_result = VariableContainer.reassignable_class_var
+          return result, other_result
+  
+  
+  # Dataclass with variables
+  @dataclass
+  class VariableDataclass:
+      """Dataclass that contains various fields."""
+  
+      # Field variables with type annotations
+      id: int
+      name: str
+      items: list[str] = field(default_factory=list)
+      metadata: dict[str, str] = field(default_factory=dict)
+      optional_value: float | None = None
+  
+      # This will be reassigned in various places
+      status: str = "pending"
+  
+  
+  # Function that uses the module variables
+  def use_module_variables():
+      """Function that uses module-level variables."""
+      result = module_var + " used in function"
+      other_result = reassignable_module_var * 2
+      return result, other_result
+  
+  
+  # Create instances and use variables
+  dataclass_instance = VariableDataclass(id=1, name="Test")
+  dataclass_instance.status = "active"  # Reassign dataclass field
+  
+  # Use variables at module level
+  module_result = module_var + " used at module level"
+  other_module_result = reassignable_module_var + 30
+  
+  # Create a second dataclass instance with different status
+  second_dataclass = VariableDataclass(id=2, name="Another Test")
+  second_dataclass.status = "completed"  # Another reassignment of status
+  
+  '''
+# ---
+# name: test_insert_in_rel_to_symbol[test_case0-before]
+  '''
+  """
+  Test module for variable declarations and usage.
+  
+  This module tests various types of variable declarations and usages including:
+  - Module-level variables
+  - Class-level variables
+  - Instance variables
+  - Variable reassignments
+  """
+  
+  from dataclasses import dataclass, field
+  
+  # Module-level variables
+  module_var = "Initial module value"
+  
+  reassignable_module_var = 10
+  reassignable_module_var = 20  # Reassigned
+  
+  # Module-level variable with type annotation
+  new_module_var = "Inserted after typed_module_var"
+  typed_module_var: int = 42
+  
+  
+  # Regular class with class and instance variables
+  class VariableContainer:
+      """Class that contains various variables."""
+  
+      # Class-level variables
+      class_var = "Initial class value"
+  
+      reassignable_class_var = True
+      reassignable_class_var = False  # Reassigned #noqa: PIE794
+  
+      # Class-level variable with type annotation
+      typed_class_var: str = "typed value"
+  
+      def __init__(self):
+          # Instance variables
+          self.instance_var = "Initial instance value"
+          self.reassignable_instance_var = 100
+  
+          # Instance variable with type annotation
+          self.typed_instance_var: list[str] = ["item1", "item2"]
+  
+      def modify_instance_var(self):
+          # Reassign instance variable
+          self.instance_var = "Modified instance value"
+          self.reassignable_instance_var = 200  # Reassigned
+  
+      def use_module_var(self):
+          # Use module-level variables
+          result = module_var + " used in method"
+          other_result = reassignable_module_var + 5
+          return result, other_result
+  
+      def use_class_var(self):
+          # Use class-level variables
+          result = VariableContainer.class_var + " used in method"
+          other_result = VariableContainer.reassignable_class_var
+          return result, other_result
+  
+  
+  # Dataclass with variables
+  @dataclass
+  class VariableDataclass:
+      """Dataclass that contains various fields."""
+  
+      # Field variables with type annotations
+      id: int
+      name: str
+      items: list[str] = field(default_factory=list)
+      metadata: dict[str, str] = field(default_factory=dict)
+      optional_value: float | None = None
+  
+      # This will be reassigned in various places
+      status: str = "pending"
+  
+  
+  # Function that uses the module variables
+  def use_module_variables():
+      """Function that uses module-level variables."""
+      result = module_var + " used in function"
+      other_result = reassignable_module_var * 2
+      return result, other_result
+  
+  
+  # Create instances and use variables
+  dataclass_instance = VariableDataclass(id=1, name="Test")
+  dataclass_instance.status = "active"  # Reassign dataclass field
+  
+  # Use variables at module level
+  module_result = module_var + " used at module level"
+  other_module_result = reassignable_module_var + 30
+  
+  # Create a second dataclass instance with different status
+  second_dataclass = VariableDataclass(id=2, name="Another Test")
+  second_dataclass.status = "completed"  # Another reassignment of status
+  
+  '''
+# ---
+# name: test_insert_in_rel_to_symbol[test_case1-after]
+  '''
+  """
+  Test module for variable declarations and usage.
+  
+  This module tests various types of variable declarations and usages including:
+  - Module-level variables
+  - Class-level variables
+  - Instance variables
+  - Variable reassignments
+  """
+  
+  from dataclasses import dataclass, field
+  
+  # Module-level variables
+  module_var = "Initial module value"
+  
+  reassignable_module_var = 10
+  reassignable_module_var = 20  # Reassigned
+  
+  # Module-level variable with type annotation
+  typed_module_var: int = 42
+  
+  
+  # Regular class with class and instance variables
+  class VariableContainer:
+      """Class that contains various variables."""
+  
+      # Class-level variables
+      class_var = "Initial class value"
+  
+      reassignable_class_var = True
+      reassignable_class_var = False  # Reassigned #noqa: PIE794
+  
+      # Class-level variable with type annotation
+      typed_class_var: str = "typed value"
+  
+      def __init__(self):
+          # Instance variables
+          self.instance_var = "Initial instance value"
+          self.reassignable_instance_var = 100
+  
+          # Instance variable with type annotation
+          self.typed_instance_var: list[str] = ["item1", "item2"]
+  
+      def modify_instance_var(self):
+          # Reassign instance variable
+          self.instance_var = "Modified instance value"
+          self.reassignable_instance_var = 200  # Reassigned
+  
+      def use_module_var(self):
+          # Use module-level variables
+          result = module_var + " used in method"
+          other_result = reassignable_module_var + 5
+          return result, other_result
+  
+      def use_class_var(self):
+          # Use class-level variables
+          result = VariableContainer.class_var + " used in method"
+          other_result = VariableContainer.reassignable_class_var
+          return result, other_result
+  
+  
+  # Dataclass with variables
+  @dataclass
+  class VariableDataclass:
+      """Dataclass that contains various fields."""
+  
+      # Field variables with type annotations
+      id: int
+      name: str
+      items: list[str] = field(default_factory=list)
+      metadata: dict[str, str] = field(default_factory=dict)
+      optional_value: float | None = None
+  
+      # This will be reassigned in various places
+      status: str = "pending"
+  
+  
+  # Function that uses the module variables
+  def use_module_variables():
+      """Function that uses module-level variables."""
+      result = module_var + " used in function"
+      other_result = reassignable_module_var * 2
+      return result, other_result
+  
+  def new_inserted_function():
+      print("This is a new function inserted before another.")
+  
+  
+  # Create instances and use variables
+  dataclass_instance = VariableDataclass(id=1, name="Test")
+  dataclass_instance.status = "active"  # Reassign dataclass field
+  
+  # Use variables at module level
+  module_result = module_var + " used at module level"
+  other_module_result = reassignable_module_var + 30
+  
+  # Create a second dataclass instance with different status
+  second_dataclass = VariableDataclass(id=2, name="Another Test")
+  second_dataclass.status = "completed"  # Another reassignment of status
+  
+  '''
+# ---
+# name: test_insert_in_rel_to_symbol[test_case1-before]
+  '''
+  """
+  Test module for variable declarations and usage.
+  
+  This module tests various types of variable declarations and usages including:
+  - Module-level variables
+  - Class-level variables
+  - Instance variables
+  - Variable reassignments
+  """
+  
+  from dataclasses import dataclass, field
+  
+  # Module-level variables
+  module_var = "Initial module value"
+  
+  reassignable_module_var = 10
+  reassignable_module_var = 20  # Reassigned
+  
+  # Module-level variable with type annotation
+  typed_module_var: int = 42
+  
+  
+  # Regular class with class and instance variables
+  class VariableContainer:
+      """Class that contains various variables."""
+  
+      # Class-level variables
+      class_var = "Initial class value"
+  
+      reassignable_class_var = True
+      reassignable_class_var = False  # Reassigned #noqa: PIE794
+  
+      # Class-level variable with type annotation
+      typed_class_var: str = "typed value"
+  
+      def __init__(self):
+          # Instance variables
+          self.instance_var = "Initial instance value"
+          self.reassignable_instance_var = 100
+  
+          # Instance variable with type annotation
+          self.typed_instance_var: list[str] = ["item1", "item2"]
+  
+      def modify_instance_var(self):
+          # Reassign instance variable
+          self.instance_var = "Modified instance value"
+          self.reassignable_instance_var = 200  # Reassigned
+  
+      def use_module_var(self):
+          # Use module-level variables
+          result = module_var + " used in method"
+          other_result = reassignable_module_var + 5
+          return result, other_result
+  
+      def use_class_var(self):
+          # Use class-level variables
+          result = VariableContainer.class_var + " used in method"
+          other_result = VariableContainer.reassignable_class_var
+          return result, other_result
+  
+  
+  # Dataclass with variables
+  @dataclass
+  class VariableDataclass:
+      """Dataclass that contains various fields."""
+  
+      # Field variables with type annotations
+      id: int
+      name: str
+      items: list[str] = field(default_factory=list)
+      metadata: dict[str, str] = field(default_factory=dict)
+      optional_value: float | None = None
+  
+      # This will be reassigned in various places
+      status: str = "pending"
+  
+  
+  # Function that uses the module variables
+  def new_inserted_function():
+      print("This is a new function inserted before another.")
+  
+  def use_module_variables():
+      """Function that uses module-level variables."""
+      result = module_var + " used in function"
+      other_result = reassignable_module_var * 2
+      return result, other_result
+  
+  
+  # Create instances and use variables
+  dataclass_instance = VariableDataclass(id=1, name="Test")
+  dataclass_instance.status = "active"  # Reassign dataclass field
+  
+  # Use variables at module level
+  module_result = module_var + " used at module level"
+  other_module_result = reassignable_module_var + 30
+  
+  # Create a second dataclass instance with different status
+  second_dataclass = VariableDataclass(id=2, name="Another Test")
+  second_dataclass.status = "completed"  # Another reassignment of status
+  
+  '''
+# ---
+# name: test_insert_in_rel_to_symbol[test_case2-after]
+  '''
+  export class DemoClass {
+      value: number;
+      constructor(value: number) {
+          this.value = value;
+      }
+      printValue() {
+          console.log(this.value);
+      }
+  }
+  
+  function newFunctionAfterClass(): void {
+      console.log("This function is after DemoClass.");
+  }
+  
+  export function helperFunction() {
+      const demo = new DemoClass(42);
+      demo.printValue();
+  }
+  
+  helperFunction();
+  
+  '''
+# ---
+# name: test_insert_in_rel_to_symbol[test_case2-before]
+  '''
+  function newFunctionAfterClass(): void {
+      console.log("This function is after DemoClass.");
+  }
+  
+  export class DemoClass {
+      value: number;
+      constructor(value: number) {
+          this.value = value;
+      }
+      printValue() {
+          console.log(this.value);
+      }
+  }
+  
+  export function helperFunction() {
+      const demo = new DemoClass(42);
+      demo.printValue();
+  }
+  
+  helperFunction();
+  
+  '''
+# ---
+# name: test_insert_in_rel_to_symbol[test_case3-after]
+  '''
+  export class DemoClass {
+      value: number;
+      constructor(value: number) {
+          this.value = value;
+      }
+      printValue() {
+          console.log(this.value);
+      }
+  }
+  
+  export function helperFunction() {
+      const demo = new DemoClass(42);
+      demo.printValue();
+  }
+  
+  function newInsertedFunction(): void {
+      console.log("This is a new function inserted before another.");
+  }
+  
+  helperFunction();
+  
+  '''
+# ---
+# name: test_insert_in_rel_to_symbol[test_case3-before]
+  '''
+  export class DemoClass {
+      value: number;
+      constructor(value: number) {
+          this.value = value;
+      }
+      printValue() {
+          console.log(this.value);
+      }
+  }
+  
+  function newInsertedFunction(): void {
+      console.log("This is a new function inserted before another.");
+  }
+  
+  export function helperFunction() {
+      const demo = new DemoClass(42);
+      demo.printValue();
+  }
+  
+  helperFunction();
+  
+  '''
+# ---
+# name: test_insert_python_class_after
+  '''
+  """
+  Test module for variable declarations and usage.
+  
+  This module tests various types of variable declarations and usages including:
+  - Module-level variables
+  - Class-level variables
+  - Instance variables
+  - Variable reassignments
+  """
+  
+  from dataclasses import dataclass, field
+  
+  # Module-level variables
+  module_var = "Initial module value"
+  
+  reassignable_module_var = 10
+  reassignable_module_var = 20  # Reassigned
+  
+  # Module-level variable with type annotation
+  typed_module_var: int = 42
+  
+  
+  # Regular class with class and instance variables
+  class VariableContainer:
+      """Class that contains various variables."""
+  
+      # Class-level variables
+      class_var = "Initial class value"
+  
+      reassignable_class_var = True
+      reassignable_class_var = False  # Reassigned #noqa: PIE794
+  
+      # Class-level variable with type annotation
+      typed_class_var: str = "typed value"
+  
+      def __init__(self):
+          # Instance variables
+          self.instance_var = "Initial instance value"
+          self.reassignable_instance_var = 100
+  
+          # Instance variable with type annotation
+          self.typed_instance_var: list[str] = ["item1", "item2"]
+  
+      def modify_instance_var(self):
+          # Reassign instance variable
+          self.instance_var = "Modified instance value"
+          self.reassignable_instance_var = 200  # Reassigned
+  
+      def use_module_var(self):
+          # Use module-level variables
+          result = module_var + " used in method"
+          other_result = reassignable_module_var + 5
+          return result, other_result
+  
+      def use_class_var(self):
+          # Use class-level variables
+          result = VariableContainer.class_var + " used in method"
+          other_result = VariableContainer.reassignable_class_var
+          return result, other_result
+  
+  
+  # Dataclass with variables
+  @dataclass
+  class VariableDataclass:
+      """Dataclass that contains various fields."""
+  
+      # Field variables with type annotations
+      id: int
+      name: str
+      items: list[str] = field(default_factory=list)
+      metadata: dict[str, str] = field(default_factory=dict)
+      optional_value: float | None = None
+  
+      # This will be reassigned in various places
+      status: str = "pending"
+  
+  
+  class NewInsertedClass:
+      pass
+  
+  
+  # Function that uses the module variables
+  def use_module_variables():
+      """Function that uses module-level variables."""
+      result = module_var + " used in function"
+      other_result = reassignable_module_var * 2
+      return result, other_result
+  
+  
+  # Create instances and use variables
+  dataclass_instance = VariableDataclass(id=1, name="Test")
+  dataclass_instance.status = "active"  # Reassign dataclass field
+  
+  # Use variables at module level
+  module_result = module_var + " used at module level"
+  other_module_result = reassignable_module_var + 30
+  
+  # Create a second dataclass instance with different status
+  second_dataclass = VariableDataclass(id=2, name="Another Test")
+  second_dataclass.status = "completed"  # Another reassignment of status
+  
+  '''
+# ---
+# name: test_insert_python_class_before
+  '''
+  """
+  Test module for variable declarations and usage.
+  
+  This module tests various types of variable declarations and usages including:
+  - Module-level variables
+  - Class-level variables
+  - Instance variables
+  - Variable reassignments
+  """
+  
+  from dataclasses import dataclass, field
+  
+  # Module-level variables
+  module_var = "Initial module value"
+  
+  reassignable_module_var = 10
+  reassignable_module_var = 20  # Reassigned
+  
+  # Module-level variable with type annotation
+  typed_module_var: int = 42
+  
+  
+  # Regular class with class and instance variables
+  class VariableContainer:
+      """Class that contains various variables."""
+  
+      # Class-level variables
+      class_var = "Initial class value"
+  
+      reassignable_class_var = True
+      reassignable_class_var = False  # Reassigned #noqa: PIE794
+  
+      # Class-level variable with type annotation
+      typed_class_var: str = "typed value"
+  
+      def __init__(self):
+          # Instance variables
+          self.instance_var = "Initial instance value"
+          self.reassignable_instance_var = 100
+  
+          # Instance variable with type annotation
+          self.typed_instance_var: list[str] = ["item1", "item2"]
+  
+      def modify_instance_var(self):
+          # Reassign instance variable
+          self.instance_var = "Modified instance value"
+          self.reassignable_instance_var = 200  # Reassigned
+  
+      def use_module_var(self):
+          # Use module-level variables
+          result = module_var + " used in method"
+          other_result = reassignable_module_var + 5
+          return result, other_result
+  
+      def use_class_var(self):
+          # Use class-level variables
+          result = VariableContainer.class_var + " used in method"
+          other_result = VariableContainer.reassignable_class_var
+          return result, other_result
+  
+  
+  # Dataclass with variables
+  class NewInsertedClass:
+      pass
+  
+  
+  @dataclass
+  class VariableDataclass:
+      """Dataclass that contains various fields."""
+  
+      # Field variables with type annotations
+      id: int
+      name: str
+      items: list[str] = field(default_factory=list)
+      metadata: dict[str, str] = field(default_factory=dict)
+      optional_value: float | None = None
+  
+      # This will be reassigned in various places
+      status: str = "pending"
+  
+  
+  # Function that uses the module variables
+  def use_module_variables():
+      """Function that uses module-level variables."""
+      result = module_var + " used in function"
+      other_result = reassignable_module_var * 2
+      return result, other_result
+  
+  
+  # Create instances and use variables
+  dataclass_instance = VariableDataclass(id=1, name="Test")
+  dataclass_instance.status = "active"  # Reassign dataclass field
+  
+  # Use variables at module level
+  module_result = module_var + " used at module level"
+  other_module_result = reassignable_module_var + 30
+  
+  # Create a second dataclass instance with different status
+  second_dataclass = VariableDataclass(id=2, name="Another Test")
+  second_dataclass.status = "completed"  # Another reassignment of status
+  
+  '''
+# ---
+# name: test_nix_symbol_replacement_no_double_semicolon
+  '''
+  # default.nix - Traditional Nix expression for backwards compatibility
+  { pkgs ? import <nixpkgs> { } }:
+  
+  let
+    # Import library functions
+    lib = pkgs.lib;
+    stdenv = pkgs.stdenv;
+  
+    # Import our custom utilities
+    utils = import ./lib/utils.nix { inherit lib; };
+  
+    # Custom function to create a greeting
+    makeGreeting = name: "Hello, ${name}!";
+  
+    # List manipulation functions (using imported utils)
+    listUtils = {
+      double = list: map (x: x * 2) list;
+      sum = list: lib.foldl' (acc: x: acc + x) 0 list;
+      average = list:
+        if list == [ ]
+        then 0
+        else (listUtils.sum list) / (builtins.length list);
+      # Use function from imported utils
+      unique = utils.lists.unique;
+    };
+  
+    # String utilities
+    stringUtils = rec {
+      capitalize = str:
+        let
+          first = lib.substring 0 1 str;
+          rest = lib.substring 1 (-1) str;
+        in
+        (lib.toUpper first) + rest;
+  
+      repeat = n: str: lib.concatStrings (lib.genList (_: str) n);
+  
+      padLeft = width: char: str:
+        let
+          len = lib.stringLength str;
+          padding = if len >= width then 0 else width - len;
+        in
+        (repeat padding char) + str;
+    };
+  
+    # Package builder helper
+    buildSimplePackage = { name, version, script }:
+      stdenv.mkDerivation {
+        pname = name;
+        inherit version;
+  
+        phases = [ "installPhase" ];
+  
+        installPhase = ''
+          mkdir -p $out/bin
+          cat > $out/bin/${name} << EOF
+          #!/usr/bin/env bash
+          ${script}
+          EOF
+          chmod +x $out/bin/${name}
+        '';
+      };
+  
+  in
+  rec {
+    # Export utilities
+    inherit listUtils stringUtils makeGreeting;
+  
+    # Export imported utilities directly
+    inherit (utils) math strings;
+  
+    # Example packages
+    hello = buildSimplePackage {
+      name = "hello";
+      version = "1.0";
+      script = ''
+        echo "${makeGreeting "World"}"
+      '';
+    };
+  
+    calculator = buildSimplePackage {
+      name = "calculator";
+      version = "0.1";
+      script = ''
+        if [ $# -ne 3 ]; then
+          echo "Usage: calculator <num1> <op> <num2>"
+          exit 1
+        fi
+        
+        case $2 in
+          +) echo $(($1 + $3)) ;;
+          -) echo $(($1 - $3)) ;;
+          x) echo $(($1 * $3)) ;;
+          /) echo $(($1 / $3)) ;;
+          *) echo "Unknown operator: $2" ;;
+        esac
+      '';
+    };
+  
+    # Environment with multiple packages
+    devEnv = pkgs.buildEnv {
+      name = "dev-environment";
+      paths = with pkgs; [
+        git
+        vim
+        bash
+        hello
+        calculator
+      ];
+    };
+  
+    # Shell derivation
+    shell = pkgs.mkShell {
+      buildInputs = with pkgs; [
+        bash
+        coreutils
+        findutils
+        gnugrep
+        gnused
+      ];
+  
+      shellHook = ''
+        echo "Entering Nix shell environment"
+        echo "Available custom functions: makeGreeting, listUtils, stringUtils"
+      '';
+    };
+  
+    # Configuration example
+    config = {
+      system = {
+        stateVersion = "23.11";
+        enable = true;
+      };
+  
+      services = {
+        nginx = {
+          enable = false;
+          virtualHosts = {
+            "example.com" = {
+              root = "/var/www/example";
+              locations."/" = {
+                index = "index.html";
+              };
+            };
+          };
+        };
+      };
+  
+      users = {
+        c = 3;
+      };
+    };
+  
+    # Recursive attribute set example
+    tree = {
+      root = {
+        value = 1;
+        left = {
+          value = 2;
+          left = { value = 4; };
+          right = { value = 5; };
+        };
+        right = {
+          value = 3;
+          left = { value = 6; };
+          right = { value = 7; };
+        };
+      };
+  
+      # Tree traversal function
+      traverse = node:
+        if node ? left && node ? right
+        then [ node.value ] ++ (tree.traverse node.left) ++ (tree.traverse node.right)
+        else if node ? value
+        then [ node.value ]
+        else [ ];
+    };
+  }
+  
+  '''
+# ---
+# name: test_rename_symbol
+  '''
+  """
+  Test module for variable declarations and usage.
+  
+  This module tests various types of variable declarations and usages including:
+  - Module-level variables
+  - Class-level variables
+  - Instance variables
+  - Variable reassignments
+  """
+  
+  from dataclasses import dataclass, field
+  
+  # Module-level variables
+  module_var = "Initial module value"
+  
+  reassignable_module_var = 10
+  reassignable_module_var = 20  # Reassigned
+  
+  # Module-level variable with type annotation
+  renamed_typed_module_var: int = 42
+  
+  
+  # Regular class with class and instance variables
+  class VariableContainer:
+      """Class that contains various variables."""
+  
+      # Class-level variables
+      class_var = "Initial class value"
+  
+      reassignable_class_var = True
+      reassignable_class_var = False  # Reassigned #noqa: PIE794
+  
+      # Class-level variable with type annotation
+      typed_class_var: str = "typed value"
+  
+      def __init__(self):
+          # Instance variables
+          self.instance_var = "Initial instance value"
+          self.reassignable_instance_var = 100
+  
+          # Instance variable with type annotation
+          self.typed_instance_var: list[str] = ["item1", "item2"]
+  
+      def modify_instance_var(self):
+          # Reassign instance variable
+          self.instance_var = "Modified instance value"
+          self.reassignable_instance_var = 200  # Reassigned
+  
+      def use_module_var(self):
+          # Use module-level variables
+          result = module_var + " used in method"
+          other_result = reassignable_module_var + 5
+          return result, other_result
+  
+      def use_class_var(self):
+          # Use class-level variables
+          result = VariableContainer.class_var + " used in method"
+          other_result = VariableContainer.reassignable_class_var
+          return result, other_result
+  
+  
+  # Dataclass with variables
+  @dataclass
+  class VariableDataclass:
+      """Dataclass that contains various fields."""
+  
+      # Field variables with type annotations
+      id: int
+      name: str
+      items: list[str] = field(default_factory=list)
+      metadata: dict[str, str] = field(default_factory=dict)
+      optional_value: float | None = None
+  
+      # This will be reassigned in various places
+      status: str = "pending"
+  
+  
+  # Function that uses the module variables
+  def use_module_variables():
+      """Function that uses module-level variables."""
+      result = module_var + " used in function"
+      other_result = reassignable_module_var * 2
+      return result, other_result
+  
+  
+  # Create instances and use variables
+  dataclass_instance = VariableDataclass(id=1, name="Test")
+  dataclass_instance.status = "active"  # Reassign dataclass field
+  
+  # Use variables at module level
+  module_result = module_var + " used at module level"
+  other_module_result = reassignable_module_var + 30
+  
+  # Create a second dataclass instance with different status
+  second_dataclass = VariableDataclass(id=2, name="Another Test")
+  second_dataclass.status = "completed"  # Another reassignment of status
+  
+  '''
+# ---
+# name: test_replace_body[test_case0]
+  '''
+  """
+  Test module for variable declarations and usage.
+  
+  This module tests various types of variable declarations and usages including:
+  - Module-level variables
+  - Class-level variables
+  - Instance variables
+  - Variable reassignments
+  """
+  
+  from dataclasses import dataclass, field
+  
+  # Module-level variables
+  module_var = "Initial module value"
+  
+  reassignable_module_var = 10
+  reassignable_module_var = 20  # Reassigned
+  
+  # Module-level variable with type annotation
+  typed_module_var: int = 42
+  
+  
+  # Regular class with class and instance variables
+  class VariableContainer:
+      """Class that contains various variables."""
+  
+      # Class-level variables
+      class_var = "Initial class value"
+  
+      reassignable_class_var = True
+      reassignable_class_var = False  # Reassigned #noqa: PIE794
+  
+      # Class-level variable with type annotation
+      typed_class_var: str = "typed value"
+  
+      def __init__(self):
+          # Instance variables
+          self.instance_var = "Initial instance value"
+          self.reassignable_instance_var = 100
+  
+          # Instance variable with type annotation
+          self.typed_instance_var: list[str] = ["item1", "item2"]
+  
+      def modify_instance_var(self):
+          # This body has been replaced
+          self.instance_var = "Replaced!"
+          self.reassignable_instance_var = 999  # Reassigned
+  
+      def use_module_var(self):
+          # Use module-level variables
+          result = module_var + " used in method"
+          other_result = reassignable_module_var + 5
+          return result, other_result
+  
+      def use_class_var(self):
+          # Use class-level variables
+          result = VariableContainer.class_var + " used in method"
+          other_result = VariableContainer.reassignable_class_var
+          return result, other_result
+  
+  
+  # Dataclass with variables
+  @dataclass
+  class VariableDataclass:
+      """Dataclass that contains various fields."""
+  
+      # Field variables with type annotations
+      id: int
+      name: str
+      items: list[str] = field(default_factory=list)
+      metadata: dict[str, str] = field(default_factory=dict)
+      optional_value: float | None = None
+  
+      # This will be reassigned in various places
+      status: str = "pending"
+  
+  
+  # Function that uses the module variables
+  def use_module_variables():
+      """Function that uses module-level variables."""
+      result = module_var + " used in function"
+      other_result = reassignable_module_var * 2
+      return result, other_result
+  
+  
+  # Create instances and use variables
+  dataclass_instance = VariableDataclass(id=1, name="Test")
+  dataclass_instance.status = "active"  # Reassign dataclass field
+  
+  # Use variables at module level
+  module_result = module_var + " used at module level"
+  other_module_result = reassignable_module_var + 30
+  
+  # Create a second dataclass instance with different status
+  second_dataclass = VariableDataclass(id=2, name="Another Test")
+  second_dataclass.status = "completed"  # Another reassignment of status
+  
+  '''
+# ---
+# name: test_replace_body[test_case1]
+  '''
+  export class DemoClass {
+      value: number;
+      constructor(value: number) {
+          this.value = value;
+      }
+      function printValue() {
+          // This body has been replaced
+          console.warn("New value: " + this.value);
+      }
+  }
+  
+  export function helperFunction() {
+      const demo = new DemoClass(42);
+      demo.printValue();
+  }
+  
+  helperFunction();
+  
+  '''
+# ---

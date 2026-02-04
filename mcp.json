@@ -1,0 +1,21 @@
+{
+  "mcpServers": {
+    "serena-local": {
+      "type": "stdio",
+      "command": "C:\\Users\\User\\.local\\bin\\uv.exe",
+      "args": [
+        "run",
+        "--directory",
+        "D:\\Docker\\app\\Serena",
+        "serena-mcp-server",
+        "--context",
+        "ide",
+        "--project",
+        "${workspaceFolder}"
+      ],
+      "env": {}
+    }
+  }
+}
+
+

@@ -1,0 +1,27 @@
+# BSL Language Server cache
+.bsl-language-server/
+
+# IDE files
+.vscode/
+.idea/
+
+# Build artifacts
+build/
+bin/
+out/
+
+# Temporary files
+*.tmp
+*.bak
+
+
+
+
+
+
+
+
+
+
+
+

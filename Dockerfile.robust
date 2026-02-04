@@ -1,0 +1,122 @@
+# Robust Dockerfile with improved network error handling
+# Use this if you have network issues during build
+# Build command: docker build -f Dockerfile.robust -t serena:robust .
+
+# Base stage with common dependencies
+FROM eclipse-temurin:17-jdk-jammy AS base
+
+SHELL ["/bin/bash", "-c"]
+
+# Set environment variables to make Python print directly to the terminal and avoid .pyc files.
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+
+# Install system dependencies required for package manager and build tools.
+# sudo, wget, zip needed for some assistants, like junie
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 python3-pip python3-venv python3-distutils \
+    curl \
+    build-essential \
+    git \
+    ssh \
+    sudo \
+    wget \
+    zip \
+    unzip \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install pipx.
+RUN python3 -m pip install --no-cache-dir pipx \
+    && pipx ensurepath
+
+# Add local bin to the path early
+ENV PATH="${PATH}:/root/.local/bin"
+
+# Install uv via pip (most reliable method for poor networks)
+RUN echo "Installing uv via pip (robust method)..." && \
+    python3 -m pip install --no-cache-dir --timeout 300 uv && \
+    uv --version && \
+    echo "✅ uv installed successfully"
+
+# Install nodejs with aggressive retry settings
+ENV NVM_VERSION=0.40.3
+ENV NODE_VERSION=22.18.0
+RUN echo "Installing Node.js via nvm..." && \
+    curl -o- --retry 10 --retry-delay 5 --connect-timeout 60 --max-time 600 \
+    https://raw.githubusercontent.com/nvm-sh/nvm/v${NVM_VERSION}/install.sh | bash || \
+    (echo "⚠️  First attempt failed, retrying..." && sleep 5 && \
+     curl -o- --retry 10 --retry-delay 5 --connect-timeout 60 --max-time 600 \
+     https://raw.githubusercontent.com/nvm-sh/nvm/v${NVM_VERSION}/install.sh | bash)
+
+# standard location
+ENV NVM_DIR=/root/.nvm
+RUN . "$NVM_DIR/nvm.sh" && nvm install ${NODE_VERSION}
+RUN . "$NVM_DIR/nvm.sh" && nvm use v${NODE_VERSION}
+RUN . "$NVM_DIR/nvm.sh" && nvm alias default v${NODE_VERSION}
+ENV PATH="${NVM_DIR}/versions/node/v${NODE_VERSION}/bin/:${PATH}"
+
+# Install Rust and rustup for rust-analyzer support with aggressive retry
+ENV RUSTUP_HOME=/usr/local/rustup
+ENV CARGO_HOME=/usr/local/cargo
+ENV PATH="${CARGO_HOME}/bin:${PATH}"
+RUN echo "Installing Rust..." && \
+    curl --proto '=https' --tlsv1.2 -sSf --retry 10 --retry-delay 5 --connect-timeout 60 --max-time 600 \
+    https://sh.rustup.rs | sh -s -- -y \
+    --default-toolchain stable \
+    --profile minimal || \
+    (echo "⚠️  First attempt failed, retrying..." && sleep 5 && \
+     curl --proto '=https' --tlsv1.2 -sSf --retry 10 --retry-delay 5 --connect-timeout 60 --max-time 600 \
+     https://sh.rustup.rs | sh -s -- -y \
+     --default-toolchain stable \
+     --profile minimal) && \
+    rustup component add rust-analyzer
+
+# Set BSL Language Server JAR path and create directory
+ENV BSL_LANGUAGE_SERVER_JAR=/opt/tools/bsl-language-server.jar
+RUN mkdir -p /opt/tools
+
+# Set the working directory
+WORKDIR /workspaces/serena
+
+# Development target
+FROM base AS development
+# Copy all files for development
+COPY . /workspaces/serena/
+
+# Create virtual environment and install dependencies with dev extras
+RUN uv venv
+RUN . .venv/bin/activate
+RUN uv pip install --all-extras -r pyproject.toml -e .
+ENV PATH="/workspaces/serena/.venv/bin:${PATH}"
+
+# Entrypoint to ensure environment is activated
+ENTRYPOINT ["/bin/bash", "-c", "source .venv/bin/activate && $0 $@"]
+
+# Production target
+FROM base AS production
+# Copy only necessary files for production
+COPY pyproject.toml /workspaces/serena/
+COPY README.md /workspaces/serena/
+COPY src/ /workspaces/serena/src/
+
+# Create virtual environment and install dependencies (production only)
+RUN uv venv
+RUN . .venv/bin/activate
+RUN uv pip install -r pyproject.toml -e .
+ENV PATH="/workspaces/serena/.venv/bin:${PATH}"
+
+# Entrypoint to ensure environment is activated
+ENTRYPOINT ["/bin/bash", "-c", "source .venv/bin/activate && $0 $@"]
+
+
+
+
+
+
+
+
+
+
+
+
