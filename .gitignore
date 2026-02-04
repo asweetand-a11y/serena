@@ -199,6 +199,7 @@ pylint.html
 # Serena-specific
 /*.yml
 !*.template.yml
+!___serena_config.yml
 /agent-ui
 /test/**/.serena
 .serena/
