@@ -289,6 +289,9 @@ class SolidLanguageServer(ABC):
         """maps relative file paths to a tuple of (file_content_hash, document_symbols)"""
         self._document_symbols_cache_is_modified: bool = False
         self._load_document_symbols_cache()
+        # Bumped on any mutation of symbol caches; used to avoid clearing dirty flags after concurrent writes (e.g. BSL ThreadPool).
+        self._symbol_caches_mutation_seq: int = 0
+        self._symbol_caches_lock = threading.RLock()
 
         self.server_started = False
         self.completions_available = threading.Event()
@@ -956,8 +959,8 @@ class SolidLanguageServer(ABC):
             )
 
             # update cache
-            self._raw_document_symbols_cache[cache_key] = (fd.content_hash, response)
-            self._raw_document_symbols_cache_is_modified = True
+            with self._symbol_caches_transaction(raw=True):
+                self._raw_document_symbols_cache[cache_key] = (fd.content_hash, response)
 
             return response
 
@@ -1082,8 +1085,8 @@ class SolidLanguageServer(ABC):
 
             # update cache
             log.debug("Updating cached document symbols for %s", relative_file_path)
-            self._document_symbols_cache[cache_key] = (file_data.content_hash, document_symbols)
-            self._document_symbols_cache_is_modified = True
+            with self._symbol_caches_transaction(document=True):
+                self._document_symbols_cache[cache_key] = (file_data.content_hash, document_symbols)
 
             return document_symbols
 
@@ -1670,17 +1673,39 @@ class SolidLanguageServer(ABC):
 
         return defining_symbol
 
+    @contextmanager
+    def _symbol_caches_transaction(self, *, raw: bool = False, document: bool = False) -> Iterator[None]:
+        """
+        Serialize mutations to symbol caches (e.g. BSL ThreadPool workers).
+
+        dict(...) snapshots for pickle must not run concurrently with writes, or CPython can raise
+        \"dictionary changed size during iteration\".
+        """
+        with self._symbol_caches_lock:
+            yield
+            if raw:
+                self._raw_document_symbols_cache_is_modified = True
+            if document:
+                self._document_symbols_cache_is_modified = True
+            if raw or document:
+                self._symbol_caches_mutation_seq += 1
+
     def _save_raw_document_symbols_cache(self) -> None:
         cache_file = self.cache_dir / self.RAW_DOCUMENT_SYMBOL_CACHE_FILENAME
 
-        if not self._raw_document_symbols_cache_is_modified:
-            log.debug("No changes to raw document symbols cache, skipping save")
-            return
+        with self._symbol_caches_lock:
+            if not self._raw_document_symbols_cache_is_modified:
+                log.debug("No changes to raw document symbols cache, skipping save")
+                return
+            seq_at_snapshot = self._symbol_caches_mutation_seq
+            cache_snapshot = dict(self._raw_document_symbols_cache)
 
         log.info("Saving updated raw document symbols cache to %s", cache_file)
         try:
-            save_cache(str(cache_file), self._raw_document_symbols_cache_version(), self._raw_document_symbols_cache)
-            self._raw_document_symbols_cache_is_modified = False
+            save_cache(str(cache_file), self._raw_document_symbols_cache_version(), cache_snapshot)
+            with self._symbol_caches_lock:
+                if self._symbol_caches_mutation_seq == seq_at_snapshot:
+                    self._raw_document_symbols_cache_is_modified = False
         except Exception as e:
             log.error(
                 "Failed to save raw document symbols cache to %s: %s. Note: this may have resulted in a corrupted cache file.",
@@ -1711,8 +1736,8 @@ class SolidLanguageServer(ABC):
                             migrated_cache[new_cache_key] = (file_hash, root_symbols)
                             num_symbols_migrated += len(all_symbols)
                     log.info("Migrated %d document symbols from legacy cache", num_symbols_migrated)
-                    self._raw_document_symbols_cache = migrated_cache  # type: ignore
-                    self._raw_document_symbols_cache_is_modified = True
+                    with self._symbol_caches_transaction(raw=True):
+                        self._raw_document_symbols_cache = migrated_cache  # type: ignore
                     self._save_raw_document_symbols_cache()
                     legacy_cache_file.unlink()
                     return
@@ -1739,14 +1764,19 @@ class SolidLanguageServer(ABC):
     def _save_document_symbols_cache(self) -> None:
         cache_file = self.cache_dir / self.DOCUMENT_SYMBOL_CACHE_FILENAME
 
-        if not self._document_symbols_cache_is_modified:
-            log.debug("No changes to document symbols cache, skipping save")
-            return
+        with self._symbol_caches_lock:
+            if not self._document_symbols_cache_is_modified:
+                log.debug("No changes to document symbols cache, skipping save")
+                return
+            seq_at_snapshot = self._symbol_caches_mutation_seq
+            cache_snapshot = dict(self._document_symbols_cache)
 
         log.info("Saving updated document symbols cache to %s", cache_file)
         try:
-            save_cache(str(cache_file), self.DOCUMENT_SYMBOL_CACHE_VERSION, self._document_symbols_cache)
-            self._document_symbols_cache_is_modified = False
+            save_cache(str(cache_file), self.DOCUMENT_SYMBOL_CACHE_VERSION, cache_snapshot)
+            with self._symbol_caches_lock:
+                if self._symbol_caches_mutation_seq == seq_at_snapshot:
+                    self._document_symbols_cache_is_modified = False
         except Exception as e:
             log.error(
                 "Failed to save document symbols cache to %s: %s. Note: this may have resulted in a corrupted cache file.",

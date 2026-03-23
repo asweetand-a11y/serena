@@ -389,14 +389,9 @@ class BSLLanguageServer(SolidLanguageServer):
             if relative_file_path not in existing_files_set:
                 # Файл удален, удаляем из кеша
                 try:
-                    # Удаляем из document_symbols_cache
-                    del self._document_symbols_cache[cache_key]
-                    self._document_symbols_cache_is_modified = True
-                    
-                    # Удаляем из raw_document_symbols_cache
-                    if relative_file_path in self._raw_document_symbols_cache:
-                        del self._raw_document_symbols_cache[relative_file_path]
-                        self._raw_document_symbols_cache_is_modified = True
+                    with self._symbol_caches_transaction(raw=True, document=True):
+                        del self._document_symbols_cache[cache_key]
+                        self._raw_document_symbols_cache.pop(relative_file_path, None)
                     
                     # Удаляем из local_cache
                     if self._local_cache is not None:
@@ -921,8 +916,8 @@ class BSLLanguageServer(SolidLanguageServer):
                         
                         # Сохраняем в кеш
                         cache_key = rel_path  # Ключ должен быть строкой, не tuple
-                        self._document_symbols_cache[cache_key] = (file_hash, document_symbols)
-                        self._document_symbols_cache_is_modified = True
+                        with self._symbol_caches_transaction(document=True):
+                            self._document_symbols_cache[cache_key] = (file_hash, document_symbols)
                         
                         results[rel_path] = None
                         processed_count += 1
@@ -1407,13 +1402,10 @@ class BSLLanguageServer(SolidLanguageServer):
                 # Создаем DocumentSymbols и сохраняем в кеш
                 document_symbols = DocumentSymbols(unified_symbols)
                 cache_key = filename  # Ключ должен быть строкой, не tuple
-                self._document_symbols_cache[cache_key] = (file_hash, document_symbols)
-                self._document_symbols_cache_is_modified = True
-                
-                # Также обновляем raw cache для консистентности
                 raw_cache_key = filename
-                self._raw_document_symbols_cache[raw_cache_key] = (file_hash, None)
-                self._raw_document_symbols_cache_is_modified = True
+                with self._symbol_caches_transaction(raw=True, document=True):
+                    self._document_symbols_cache[cache_key] = (file_hash, document_symbols)
+                    self._raw_document_symbols_cache[raw_cache_key] = (file_hash, None)
                 
                 # Помечаем файл как преобразованный для инкрементального преобразования
                 self._converted_files.add(filename)
@@ -1454,13 +1446,10 @@ class BSLLanguageServer(SolidLanguageServer):
         if not methods:
             # Если нет методов, создаем пустой DocumentSymbols
             document_symbols = DocumentSymbols([])
-            self._document_symbols_cache[document_cache_key] = (file_hash, document_symbols)
-            self._document_symbols_cache_is_modified = True
-            
-            # Также обновляем raw cache для консистентности
-            # Кладем None, так как файл был обработан локальным парсером
-            self._raw_document_symbols_cache[raw_cache_key] = (file_hash, None)
-            self._raw_document_symbols_cache_is_modified = True
+            with self._symbol_caches_transaction(raw=True, document=True):
+                self._document_symbols_cache[document_cache_key] = (file_hash, document_symbols)
+                # Кладем None в raw cache: файл обработан локальным парсером
+                self._raw_document_symbols_cache[raw_cache_key] = (file_hash, None)
             return
         
         # Создаем UnifiedSymbolInformation для каждого метода
@@ -1518,13 +1507,10 @@ class BSLLanguageServer(SolidLanguageServer):
         
         # Создаем DocumentSymbols и сохраняем в кеш
         document_symbols = DocumentSymbols(unified_symbols)
-        self._document_symbols_cache[document_cache_key] = (file_hash, document_symbols)
-        self._document_symbols_cache_is_modified = True
-        
-        # Также обновляем raw cache для консистентности
-        # Кладем None, так как файл был обработан локальным парсером, а не LSP сервером
-        self._raw_document_symbols_cache[raw_cache_key] = (file_hash, None)
-        self._raw_document_symbols_cache_is_modified = True
+        with self._symbol_caches_transaction(raw=True, document=True):
+            self._document_symbols_cache[document_cache_key] = (file_hash, document_symbols)
+            # Кладем None в raw cache: файл обработан локальным парсером, а не LSP
+            self._raw_document_symbols_cache[raw_cache_key] = (file_hash, None)
     
     def _extract_method_body(self, file_content: str, method: Any) -> str:
         """
@@ -2042,9 +2028,10 @@ class BSLLanguageServer(SolidLanguageServer):
         
         # 1. Удаление из кешей DocumentSymbols
         cache_key = relative_file_path
-        self._document_symbols_cache.pop(cache_key, None)
-        if hasattr(self, '_raw_document_symbols_cache'):
-            self._raw_document_symbols_cache.pop(cache_key, None)
+        with self._symbol_caches_transaction(raw=True, document=True):
+            self._document_symbols_cache.pop(cache_key, None)
+            if hasattr(self, '_raw_document_symbols_cache'):
+                self._raw_document_symbols_cache.pop(cache_key, None)
         
         # 2. Удаление данных файла из локального кеша
         if self._local_cache is not None:
