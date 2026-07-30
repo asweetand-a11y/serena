@@ -276,3 +276,8 @@ zz-misc/
 vue-implementation/
 
 news/news.json
+
+# Cursor
+.cursor/**
+AGENTS.md
+.serena/memories/**
