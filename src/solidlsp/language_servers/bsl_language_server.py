@@ -816,7 +816,7 @@ class BSLLanguageServer(SolidLanguageServer):
             file_root_nodes = document_symbols.root_symbols
 
             # Создаем символ файла
-            file_symbol = ls_types.UnifiedSymbolInformation(  # type: ignore
+            file_symbol = ls_types.UnifiedSymbolInformation(
                 name=os.path.splitext(file_path_obj.name)[0],
                 kind=ls_types.SymbolKind.File,
                 range=file_range,
@@ -864,7 +864,7 @@ class BSLLanguageServer(SolidLanguageServer):
                     dir_path_obj = Path(current_path)
                     dir_abs_path = os.path.join(self.repository_root_path, current_path)
 
-                    dir_symbol = ls_types.UnifiedSymbolInformation(  # type: ignore
+                    dir_symbol = ls_types.UnifiedSymbolInformation(
                         name=dir_path_obj.name if current_path != "." else os.path.basename(self.repository_root_path),
                         kind=ls_types.SymbolKind.Package,
                         location=ls_types.Location(
@@ -1575,7 +1575,7 @@ class BSLLanguageServer(SolidLanguageServer):
                     method = method_info.method
 
                     # Определяем kind: 12 для Function, 6 для Method (процедура)
-                    kind = 12 if not method.isproc else 6
+                    kind = ls_types.SymbolKind.Function if not method.isproc else ls_types.SymbolKind.Method
 
                     # Создаем range для метода
                     start_line = method.line
@@ -1683,7 +1683,7 @@ class BSLLanguageServer(SolidLanguageServer):
         lines = file_content.split("\n")
 
         for method in methods:
-            kind = 12 if not method.isproc else 6
+            kind = ls_types.SymbolKind.Function if not method.isproc else ls_types.SymbolKind.Method
 
             start_line = method.line
             end_line = min(method.endline, len(lines) - 1) if method.endline < len(lines) else len(lines) - 1

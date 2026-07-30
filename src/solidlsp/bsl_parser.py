@@ -282,7 +282,8 @@ class BSLParser:
             for param_match in self.PARAM_PATTERN.finditer(params_text):
                 param_name = param_match.group(1)
                 byval = "Знач" in param_match.group(0) or "знач" in param_match.group(0)
-                default = param_match.group(2) if param_match.lastindex >= 2 and param_match.group(2) else None
+                default_raw = param_match.group(2) if param_match.lastindex and param_match.lastindex >= 2 else None
+                default = default_raw if default_raw else None
 
                 params.append(BSLParam(name=param_name, byval=byval, default=default.strip() if default else None))
 
@@ -302,9 +303,10 @@ class BSLParser:
             # Используем search, но проверяем, что совпадение в начале строки (после пробелов)
             proc_match = self.PROC_PATTERN.search(line)
             func_match = self.FUNC_PATTERN.search(line)
-            if proc_match or func_match:
+            nested_match = proc_match or func_match
+            if nested_match is not None:
                 # Проверяем, что совпадение действительно в начале строки (после пробелов)
-                match_pos = proc_match.start() if proc_match else func_match.start()
+                match_pos = nested_match.start()
                 if match_pos == len(line) - len(line.lstrip()):
                     depth += 1
             # Проверяем конец процедур/функций
