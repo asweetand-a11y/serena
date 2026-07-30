@@ -29,9 +29,16 @@ def bsl_ls(tmp_path: Path) -> BSLLanguageServer:
     project_data = tmp_path / "project_data"
     project_data.mkdir()
     config = LanguageServerConfig(ls_id=LanguageServerId.BSL, ignored_paths=[])
-    settings = SolidLSPSettings(project_data_path=str(project_data))
+    settings = SolidLSPSettings(
+        project_data_path=str(project_data),
+        ls_specific_settings={"bsl": {"cache_update_start_delay_seconds": 0}},
+    )
     ls = BSLLanguageServer(config, str(repo), settings)
     ls.start()
+    # Background cache update must finish before assertions (indexing is async).
+    if ls._cache_update_thread is not None:
+        ls._cache_update_thread.join(timeout=120)
+        assert not ls._cache_update_thread.is_alive(), "BSL cache update did not finish in time"
     try:
         yield ls
     finally:

@@ -1609,6 +1609,8 @@ class BSLLanguageServer(SolidLanguageServer):
                     detail = " | ".join(detail_parts) if detail_parts else None
 
                     # Создаем UnifiedSymbolInformation
+                    if method.description:
+                        detail = f"{detail} | {method.description}" if detail else method.description
                     symbol: ls_types.UnifiedSymbolInformation = {
                         "name": method.name,
                         "kind": kind,
@@ -1623,9 +1625,9 @@ class BSLLanguageServer(SolidLanguageServer):
                             end_line,
                             end_char,
                         ),
-                        "detail": detail,
-                        "description": method.description or None,
                     }
+                    if detail:
+                        symbol["detail"] = detail
 
                     unified_symbols.append(symbol)
 
@@ -1709,6 +1711,8 @@ class BSLLanguageServer(SolidLanguageServer):
                 detail_parts.append("Экспорт")
             detail = " | ".join(detail_parts) if detail_parts else None
 
+            if method.description:
+                detail = f"{detail} | {method.description}" if detail else method.description
             symbol: ls_types.UnifiedSymbolInformation = {
                 "name": method.name,
                 "kind": kind,
@@ -1723,9 +1727,9 @@ class BSLLanguageServer(SolidLanguageServer):
                     end_line,
                     end_char,
                 ),
-                "detail": detail,
-                "description": method.description or None,
             }
+            if detail:
+                symbol["detail"] = detail
 
             unified_symbols.append(symbol)
 
@@ -1814,11 +1818,8 @@ class BSLLanguageServer(SolidLanguageServer):
                 if symbol.get("name") != symbol_name:
                     continue
                 detail = symbol.get("detail")
-                description = symbol.get("description")
                 if detail and detail not in parts:
                     parts.append(str(detail))
-                if description and description not in parts:
-                    parts.append(str(description))
                 break
         except Exception as e:
             log.debug("Hover: document symbols lookup failed: %s", e)
