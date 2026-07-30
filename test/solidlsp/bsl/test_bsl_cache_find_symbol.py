@@ -16,6 +16,7 @@ try:
     from serena.agent import SerenaAgent
 except ImportError as _e:
     pytest.skip(f"SerenaAgent unavailable: {_e}", allow_module_level=True)
+from serena.config.serena_config import SerenaConfig
 from serena.project import Project
 from serena.tools.symbol_tools import FindSymbolTool
 
@@ -43,8 +44,10 @@ class TestBSLCacheFindSymbol:
     @pytest.fixture(scope="class")
     def project(self, test_project_path: Path) -> Project:
         """Создает проект для тестирования."""
-        project = Project.load(str(test_project_path))
-        return project
+        return Project.load(
+            str(test_project_path),
+            serena_config=SerenaConfig(gui_log_window=False, web_dashboard=False),
+        )
 
     @pytest.fixture(scope="class")
     def agent(self, project: Project) -> SerenaAgent:
