@@ -1,20 +1,5 @@
 import pytest
 
-from solidlsp import SolidLanguageServer
-from solidlsp.ls_config import LanguageServerId
-from test.conftest import language_server_tests_enabled
-from test.solidlsp.util.diagnostics import assert_file_diagnostics
-
-
-@pytest.mark.bsl
-@pytest.mark.skipif(not language_server_tests_enabled(LanguageServerId.BSL), reason="BSL tests are disabled")
-class TestBSLDiagnostics:
-    @pytest.mark.parametrize("language_server", [LanguageServerId.BSL], indirect=True)
-    def test_file_diagnostics(self, language_server: SolidLanguageServer) -> None:
-        """bsl-language-server must flag the unterminated string literal in the fixture."""
-        assert_file_diagnostics(
-            language_server,
-            "diagnostics_sample.bsl",
-            (),
-            min_count=1,
-        )
+# Diagnostics require bsl-language-server.jar publishDiagnostics.
+# This fork runs BSL in local-parser/cache-only mode without the JAR.
+pytestmark = pytest.mark.skip(reason="BSL local-cache-only mode: JAR diagnostics not used")

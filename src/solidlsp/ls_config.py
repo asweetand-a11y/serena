@@ -162,9 +162,9 @@ class LanguageServerId(str, Enum):
     a virtual environment with pygls dependencies on first use.
     """
     BSL = "bsl"
-    """BSL Language Server for 1C:Enterprise and OneScript languages.
-    Uses bsl-language-server by 1c-syntax. Automatically downloads the JAR.
-    Supports .bsl and .os files. Requires Java 21+ on PATH.
+    """BSL (1C:Enterprise / OneScript) via local Python parser and cache.
+    Supports .bsl and .os files. Does not use bsl-language-server.jar.
+    Optional settings under ls_specific_settings.bsl: enable_hash_prefiltering, file_read_parallelism.
     """
     ADA = "ada"
     """Ada / SPARK language server using AdaCore's Ada Language Server (ALS).

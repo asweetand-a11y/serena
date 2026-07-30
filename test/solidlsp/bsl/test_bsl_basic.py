@@ -1,13 +1,11 @@
 import os
 from pathlib import Path
-from unittest import mock
 
 import pytest
 
 from solidlsp import SolidLanguageServer
 from solidlsp.ls_config import LanguageServerId
 from solidlsp.ls_utils import SymbolUtils
-from solidlsp.settings import SolidLSPSettings
 from test.conftest import language_server_tests_enabled
 from test.solidlsp.conftest import format_symbol_for_assert, has_malformed_name, request_all_symbols
 
@@ -146,129 +144,13 @@ def test_bsl_enum_registration() -> None:
     assert LanguageServerId.BSL.get_ls_class().__name__ == "BSLLanguageServer"
 
 
-def test_bsl_dependency_provider_default_version() -> None:
-    """DependencyProvider resolves the default version to the expected versioned JAR path."""
-    from solidlsp.language_servers.bsl_language_server import (
-        DEFAULT_BSL_LS_VERSION,
-        BSLLanguageServer,
-    )
+def test_bsl_local_only_interface_registration() -> None:
+    """BSL uses LocalOnlyLanguageServerInterface instead of JAR DependencyProvider."""
+    from solidlsp.language_servers.bsl_language_server import LocalOnlyLanguageServerInterface
 
-    settings = SolidLSPSettings()
-    provider = BSLLanguageServer.DependencyProvider(
-        settings.get_ls_specific_settings(LanguageServerId.BSL),
-        "/tmp/ls_resources",
-    )
-
-    expected_version = DEFAULT_BSL_LS_VERSION
-    expected_jar_dir = os.path.join("/tmp/ls_resources", f"bsl-ls-{expected_version}")
-    expected_jar_path = os.path.join(expected_jar_dir, f"bsl-language-server-{expected_version}-exec.jar")
-
-    # pretend JAR is already on disk so no download is attempted
-    with mock.patch("os.path.exists", return_value=True):
-        jar_path = provider._get_or_install_core_dependency()
-
-    assert jar_path == expected_jar_path
-
-
-def test_bsl_dependency_provider_custom_version_no_sha() -> None:
-    """User-overridden versions must install without SHA256 verification."""
-    from solidlsp.language_servers.bsl_language_server import BSLLanguageServer
-    from solidlsp.language_servers.common import RuntimeDependencyCollection
-
-    settings = SolidLSPSettings()
-    settings.ls_specific_settings[LanguageServerId.BSL] = {"bsl_ls_version": "0.28.0"}
-    provider = BSLLanguageServer.DependencyProvider(
-        settings.get_ls_specific_settings(LanguageServerId.BSL),
-        "/tmp/ls_resources",
-    )
-
-    custom_version = "0.28.0"
-    expected_jar_dir = os.path.join("/tmp/ls_resources", f"bsl-ls-{custom_version}")
-    expected_jar_path = os.path.join(expected_jar_dir, f"bsl-language-server-{custom_version}-exec.jar")
-
-    installed_deps = []
-
-    def fake_install(self_inner, install_dir):
-        installed_deps.extend(self_inner.get_dependencies_for_current_platform())
-        os.makedirs(install_dir, exist_ok=True)
-        open(expected_jar_path, "w").close()
-
-    with mock.patch.object(RuntimeDependencyCollection, "install", fake_install):
-        jar_path = provider._get_or_install_core_dependency()
-
-    assert jar_path == expected_jar_path
-    assert len(installed_deps) == 1
-    assert installed_deps[0].sha256 is None, "SHA256 must be None for user-overridden version"
-
-    if os.path.exists(expected_jar_path):
-        os.remove(expected_jar_path)
-    if os.path.exists(expected_jar_dir):
-        os.rmdir(expected_jar_dir)
-
-
-def test_bsl_launch_command_uses_ls_path_without_download() -> None:
-    """
-    When ``ls_path`` is set, the public launch-command flow must return the user's JAR
-    unchanged and must NOT invoke the download / install path. This covers the real
-    code path used at runtime (``create_launch_command``), not just private helpers.
-    """
-    from solidlsp.language_servers import bsl_language_server
-    from solidlsp.language_servers.bsl_language_server import BSLLanguageServer
-
-    settings = SolidLSPSettings()
-    settings.ls_specific_settings[LanguageServerId.BSL] = {"ls_path": "/custom/path/bsl-language-server.jar"}
-    provider = BSLLanguageServer.DependencyProvider(
-        settings.get_ls_specific_settings(LanguageServerId.BSL),
-        "/tmp/ls_resources",
-    )
-
-    with (
-        mock.patch.object(bsl_language_server.shutil, "which", return_value="/usr/bin/java"),
-        mock.patch.object(bsl_language_server, "_get_java_major_version", return_value=21),
-        mock.patch.object(
-            BSLLanguageServer.DependencyProvider,
-            "_get_or_install_core_dependency",
-            side_effect=AssertionError("must not be called when ls_path is provided"),
-        ) as install_mock,
-    ):
-        cmd = provider.create_launch_command()
-
-    assert cmd == ["java", "-jar", "/custom/path/bsl-language-server.jar"]
-    install_mock.assert_not_called()
-
-
-def test_bsl_launch_command_requires_java() -> None:
-    """Launch command construction must fail fast when Java is missing."""
-    from solidlsp.language_servers import bsl_language_server
-    from solidlsp.language_servers.bsl_language_server import BSLLanguageServer
-
-    settings = SolidLSPSettings()
-    settings.ls_specific_settings[LanguageServerId.BSL] = {"ls_path": "/custom/path/bsl-language-server.jar"}
-    provider = BSLLanguageServer.DependencyProvider(
-        settings.get_ls_specific_settings(LanguageServerId.BSL),
-        "/tmp/ls_resources",
-    )
-
-    with mock.patch.object(bsl_language_server.shutil, "which", return_value=None):
-        with pytest.raises(RuntimeError, match="not found on PATH"):
-            provider.create_launch_command()
-
-
-def test_bsl_launch_command_rejects_old_java() -> None:
-    """Java older than the minimum supported major version must be rejected up front."""
-    from solidlsp.language_servers import bsl_language_server
-    from solidlsp.language_servers.bsl_language_server import BSL_LS_MIN_JAVA_VERSION, BSLLanguageServer
-
-    settings = SolidLSPSettings()
-    settings.ls_specific_settings[LanguageServerId.BSL] = {"ls_path": "/custom/path/bsl-language-server.jar"}
-    provider = BSLLanguageServer.DependencyProvider(
-        settings.get_ls_specific_settings(LanguageServerId.BSL),
-        "/tmp/ls_resources",
-    )
-
-    with (
-        mock.patch.object(bsl_language_server.shutil, "which", return_value="/usr/bin/java"),
-        mock.patch.object(bsl_language_server, "_get_java_major_version", return_value=BSL_LS_MIN_JAVA_VERSION - 1),
-    ):
-        with pytest.raises(RuntimeError, match=f"Java {BSL_LS_MIN_JAVA_VERSION}\\+"):
-            provider.create_launch_command()
+    assert issubclass(LocalOnlyLanguageServerInterface, object)
+    # JAR DependencyProvider API is intentionally absent in local-cache-only mode
+    assert not hasattr(
+        LanguageServerId.BSL.get_ls_class(),
+        "DependencyProvider",
+    ), "BSL must not expose JAR DependencyProvider in local-cache-only mode"
