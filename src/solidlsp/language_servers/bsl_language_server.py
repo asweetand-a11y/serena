@@ -112,7 +112,7 @@ class BSLLanguageServer(SolidLanguageServer):
 
         self._processing_files: set[str] = set()
         self._indexing_lock = threading.Lock()
-        self._symbol_caches_lock = threading.Lock()
+        self._symbol_caches_lock = threading.RLock()
         self._cache_update_thread: threading.Thread | None = None
 
         self._error_stats: dict[str, int] = defaultdict(int)
@@ -166,6 +166,16 @@ class BSLLanguageServer(SolidLanguageServer):
                 self._raw_document_symbols_cache_is_modified = True
             if document:
                 self._document_symbols_cache_is_modified = True
+
+    def _get_document_symbols_cache_entry(self, relative_file_path: str):
+        """Return a document-symbols cache entry under the symbol-cache lock."""
+        with self._symbol_caches_lock:
+            return self._document_symbols_cache.get(relative_file_path)
+
+    def _snapshot_document_symbols_cache(self) -> dict:
+        """Copy document-symbols cache for lock-free iteration."""
+        with self._symbol_caches_lock:
+            return dict(self._document_symbols_cache)
 
     def is_ignored_dirname(self, dirname: str) -> bool:
         """Define BSL-specific directories to ignore."""
@@ -245,7 +255,7 @@ class BSLLanguageServer(SolidLanguageServer):
 
             # Document symbols may be warm while in-memory/local pickle cache is empty
             # (e.g. first run after enabling local-cache persistence).
-            if not files_to_index and self._local_cache is not None and not self._local_cache.methods:
+            if not files_to_index and self._local_cache is not None and self._local_cache.get_stats()["methods"] == 0:
                 log.info(
                     "BSL Language Server: Document symbols up to date but local cache empty; "
                     "rebuilding local cache for references/definition"
@@ -564,8 +574,7 @@ class BSLLanguageServer(SolidLanguageServer):
         existing_files_set = set(existing_files)
         removed_count = 0
 
-        # Создаем копию ключей кеша, чтобы не изменять словарь во время итерации
-        cache_keys = list(self._document_symbols_cache.keys())
+        cache_keys = list(self._snapshot_document_symbols_cache().keys())
 
         for cache_key in cache_keys:
             # Обрабатываем оба формата ключа: строка или tuple
@@ -581,14 +590,12 @@ class BSLLanguageServer(SolidLanguageServer):
                     with self._symbol_caches_transaction(raw=True, document=True):
                         del self._document_symbols_cache[cache_key]
                         self._raw_document_symbols_cache.pop(relative_file_path, None)
+                        self._converted_files.discard(relative_file_path)
 
                     # Удаляем из local_cache
                     if self._local_cache is not None:
                         self._local_cache.remove_file_data(relative_file_path)
                         self._local_cache_is_modified = True
-
-                    # Удаляем из converted_files
-                    self._converted_files.discard(relative_file_path)
 
                     # Удаляем из file_content_cache
                     self._file_content_cache.pop(relative_file_path, None)
@@ -651,7 +658,7 @@ class BSLLanguageServer(SolidLanguageServer):
         """
         with self._open_file_context(relative_file_path, file_buffer, open_in_ls=False) as file_data:
             cache_key = relative_file_path
-            cached = self._document_symbols_cache.get(cache_key)
+            cached = self._get_document_symbols_cache_entry(cache_key)
             if cached is not None:
                 file_hash, document_symbols = cached
                 if file_hash == file_data.content_hash:
@@ -662,7 +669,7 @@ class BSLLanguageServer(SolidLanguageServer):
             except Exception as e:
                 log.warning("BSL local parse failed for %s: %s", relative_file_path, e)
 
-            cached = self._document_symbols_cache.get(cache_key)
+            cached = self._get_document_symbols_cache_entry(cache_key)
             if cached is not None:
                 return cached[1]
             return DocumentSymbols([])
@@ -718,10 +725,11 @@ class BSLLanguageServer(SolidLanguageServer):
         log.debug(f"BSL: Cache directory: {self.cache_dir}")
         log.debug(f"BSL: Cache file: {self.cache_dir / self.DOCUMENT_SYMBOL_CACHE_FILENAME}")
         log.debug(f"BSL: Cache file exists: {(self.cache_dir / self.DOCUMENT_SYMBOL_CACHE_FILENAME).exists()}")
-        log.debug(f"BSL: Number of entries in _document_symbols_cache: {len(self._document_symbols_cache)}")
+        document_symbols_snapshot = self._snapshot_document_symbols_cache()
+        log.debug(f"BSL: Number of entries in _document_symbols_cache: {len(document_symbols_snapshot)}")
 
         # Выводим первые несколько ключей для диагностики
-        sample_keys = list(self._document_symbols_cache.keys())[:5]
+        sample_keys = list(document_symbols_snapshot.keys())[:5]
         log.debug(f"BSL: Sample cache keys (first 5): {sample_keys}")
         for key in sample_keys:
             log.debug(f"BSL:   - Key type: {type(key)}, value: {key}")
@@ -731,7 +739,7 @@ class BSLLanguageServer(SolidLanguageServer):
         ignored_count = 0
         filtered_by_path_count = 0
 
-        for cache_key, (file_hash, document_symbols) in self._document_symbols_cache.items():
+        for cache_key, (file_hash, document_symbols) in document_symbols_snapshot.items():
             # Обрабатываем оба формата ключа: строка или tuple (для обратной совместимости)
             if isinstance(cache_key, tuple):
                 # Старый формат: (relative_file_path, None)
@@ -779,7 +787,7 @@ class BSLLanguageServer(SolidLanguageServer):
             cached_files[relative_file_path] = (file_hash, document_symbols)
 
         log.debug(
-            f"BSL: Processed {len(self._document_symbols_cache)} cache entries: {len(cached_files)} added, {ignored_count} ignored, {filtered_by_path_count} filtered by path"
+            f"BSL: Processed {len(document_symbols_snapshot)} cache entries: {len(cached_files)} added, {ignored_count} ignored, {filtered_by_path_count} filtered by path"
         )
 
         if not cached_files:
@@ -1286,8 +1294,9 @@ class BSLLanguageServer(SolidLanguageServer):
             # Проверяем, есть ли файл уже в кеше с правильным хешем
             cache_key = relative_file_path  # Ключ должен быть строкой, не tuple
             document_up_to_date = False
-            if cache_key in self._document_symbols_cache:
-                cached_hash, _ = self._document_symbols_cache[cache_key]
+            cached_document = self._get_document_symbols_cache_entry(cache_key)
+            if cached_document is not None:
+                cached_hash, _ = cached_document
                 if cached_hash == file_hash:
                     document_up_to_date = True
                     if self._local_cache.has_file(relative_file_path):
@@ -1312,35 +1321,18 @@ class BSLLanguageServer(SolidLanguageServer):
             # Извлекаем имя модуля
             module = self._get_module_for_path(abs_path, self.repository_root_path)
 
-            # Avoid duplicates when refreshing local cache for an already-indexed file
-            if self._local_cache.has_file(relative_file_path):
-                self._local_cache.remove_file_data(relative_file_path)
-
-            # Добавляем методы в локальный кеш для поиска ссылок
-            if parse_result.methods:
-                log.debug(f"Adding {len(parse_result.methods)} methods to local cache for {relative_file_path}")
-                self._local_cache.add_methods_batch([(method, relative_file_path, module) for method in parse_result.methods])
-
-            # Добавляем переменные модуля в локальный кеш
-            if parse_result.module_vars:
-                log.debug(f"Adding {len(parse_result.module_vars)} module vars to local cache for {relative_file_path}")
-                self._local_cache.add_module_vars_batch([(var, relative_file_path) for var in parse_result.module_vars.values()])
-
-            # Добавляем вызовы на уровне модуля
-            if parse_result.global_calls:
-                log.debug(f"Adding {len(parse_result.global_calls)} global calls to local cache for {relative_file_path}")
-                self._local_cache.add_calls_batch(
-                    [(call, relative_file_path, "GlobalModuleText", module) for call in parse_result.global_calls]
-                )
-
-            # Добавляем вызовы внутри методов
-            method_calls = []
+            methods_data = [(method, relative_file_path, module) for method in parse_result.methods]
+            vars_data = [(var, relative_file_path) for var in parse_result.module_vars.values()] if parse_result.module_vars else []
+            calls_data = [(call, relative_file_path, "GlobalModuleText", module) for call in parse_result.global_calls]
             for method in parse_result.methods:
                 for call in method.calls_position:
-                    method_calls.append((call, relative_file_path, method.name, module))
-            if method_calls:
-                log.debug(f"Adding {len(method_calls)} method calls to local cache for {relative_file_path}")
-                self._local_cache.add_calls_batch(method_calls)
+                    calls_data.append((call, relative_file_path, method.name, module))
+
+            log.debug(
+                f"Updating local cache for {relative_file_path}: "
+                f"{len(methods_data)} methods, {len(vars_data)} vars, {len(calls_data)} calls"
+            )
+            self._local_cache.replace_file_index(relative_file_path, methods_data, vars_data, calls_data)
 
             self._local_cache_is_modified = True
 
@@ -1529,7 +1521,7 @@ class BSLLanguageServer(SolidLanguageServer):
 
         # Группируем методы по файлам
         methods_by_file: dict[str, list] = defaultdict(list)
-        for method_info in self._local_cache.methods:
+        for method_info in self._local_cache.find_methods():
             filename = method_info.filename
             # Если only_new_files=True, пропускаем уже преобразованные файлы
             if only_new_files and filename in self._converted_files:
@@ -1638,9 +1630,7 @@ class BSLLanguageServer(SolidLanguageServer):
                 with self._symbol_caches_transaction(raw=True, document=True):
                     self._document_symbols_cache[cache_key] = (file_hash, document_symbols)
                     self._raw_document_symbols_cache[raw_cache_key] = (file_hash, None)
-
-                # Помечаем файл как преобразованный для инкрементального преобразования
-                self._converted_files.add(filename)
+                    self._converted_files.add(filename)
 
             except Exception as e:
                 log.exception(f"Failed to convert local cache to DocumentSymbols for {filename}: {e}")
@@ -1676,6 +1666,7 @@ class BSLLanguageServer(SolidLanguageServer):
                 self._document_symbols_cache[document_cache_key] = (file_hash, document_symbols)
                 # Кладем None в raw cache: файл обработан локальным парсером
                 self._raw_document_symbols_cache[raw_cache_key] = (file_hash, None)
+                self._converted_files.add(relative_file_path)
             return
 
         # Создаем UnifiedSymbolInformation для каждого метода
@@ -1739,6 +1730,7 @@ class BSLLanguageServer(SolidLanguageServer):
             self._document_symbols_cache[document_cache_key] = (file_hash, document_symbols)
             # Кладем None в raw cache: файл обработан локальным парсером, а не LSP
             self._raw_document_symbols_cache[raw_cache_key] = (file_hash, None)
+            self._converted_files.add(relative_file_path)
 
     def _extract_method_body(self, file_content: str, method: Any) -> str:
         """
@@ -2369,6 +2361,7 @@ class BSLLanguageServer(SolidLanguageServer):
             self._document_symbols_cache.pop(cache_key, None)
             if hasattr(self, "_raw_document_symbols_cache"):
                 self._raw_document_symbols_cache.pop(cache_key, None)
+            self._converted_files.discard(relative_file_path)
 
         # 2. Удаление данных файла из локального кеша
         if self._local_cache is not None:
@@ -2377,9 +2370,6 @@ class BSLLanguageServer(SolidLanguageServer):
 
         # 3. Удаление из кеша содержимого файлов
         self._file_content_cache.pop(relative_file_path, None)
-
-        # 4. Удаление из списка преобразованных файлов
-        self._converted_files.discard(relative_file_path)
 
         # 5. Переиндексация файла
         # _parse_file_local уже вызывает _convert_single_file_to_document_symbols внутри

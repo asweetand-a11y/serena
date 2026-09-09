@@ -4,8 +4,24 @@ In-memory кеш для BSL символов (аналог LokiJS).
 """
 
 import re
+import threading
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from functools import wraps
+from typing import Any, TypeVar
+
+_R = TypeVar("_R")
+
+
+def _with_cache_lock(method: Callable[..., _R]) -> Callable[..., _R]:
+    """Serialize access to in-memory cache structures across indexer threads."""
+
+    @wraps(method)
+    def wrapper(self: "BSLCache", *args: Any, **kwargs: Any) -> _R:
+        with self._lock:
+            return method(self, *args, **kwargs)
+
+    return wrapper
 
 from solidlsp.bsl_parser import BSLCallPosition, BSLMethod, BSLModuleVar
 
@@ -33,7 +49,7 @@ class BSLModuleInfo:
     project: str = ""  # Путь к проекту
 
 
-@dataclass
+@dataclass(eq=False, unsafe_hash=True)
 class BSLMethodInfo:
     """Информация о методе с контекстом файла."""
 
@@ -46,20 +62,79 @@ class BSLCache:
     """
     In-memory база данных для кеша BSL символов.
     Аналог LokiJS из vsc-language-1c-bsl.
+    Public methods are thread-safe for concurrent local-parser indexing.
     """
 
     def __init__(self):
-        self.methods: list[BSLMethodInfo] = []
         self.module_vars: dict[str, list[BSLModuleVar]] = {}  # filename -> list of vars
         self.calls: dict[str, list[BSLCallInfo]] = {}  # call_name -> list of calls
         self.modules: list[BSLModuleInfo] = []
 
-        # Индексы для быстрого поиска
-        self._method_name_index: dict[str, list[int]] = {}  # name -> list of indices
-        self._method_module_index: dict[str, list[int]] = {}  # module -> list of indices
-        self._method_export_index: list[int] = []  # indices of exported methods
-        self._indexed_files: set[str] = set()  # indices of exported methods
+        self._methods_by_file: dict[str, list[BSLMethodInfo]] = {}
+        self._calls_by_file: dict[str, list[BSLCallInfo]] = {}
+        self._method_name_index: dict[str, list[BSLMethodInfo]] = {}
+        self._method_module_index: dict[str, list[BSLMethodInfo]] = {}
+        self._method_export_index: list[BSLMethodInfo] = []
+        self._indexed_files: set[str] = set()
+        self._lock = threading.RLock()
 
+    @property
+    def methods(self) -> list[BSLMethodInfo]:
+        """All indexed methods. Built from the per-file map; not a stored flat list."""
+        with self._lock:
+            return self._all_methods()
+
+    def _all_methods(self) -> list[BSLMethodInfo]:
+        methods: list[BSLMethodInfo] = []
+        for file_methods in self._methods_by_file.values():
+            methods.extend(file_methods)
+        return methods
+
+    def _add_method_info(self, method_info: BSLMethodInfo) -> None:
+        filename = method_info.filename
+        self._methods_by_file.setdefault(filename, []).append(method_info)
+        self._indexed_files.add(filename)
+
+        method = method_info.method
+        name_lower = method.name.lower()
+        self._method_name_index.setdefault(name_lower, []).append(method_info)
+
+        if method_info.module:
+            module_lower = method_info.module.lower()
+            self._method_module_index.setdefault(module_lower, []).append(method_info)
+
+        if method.is_export:
+            self._method_export_index.append(method_info)
+
+    def _discard_index_item(self, index: dict[str, list[BSLMethodInfo]], key: str, item: BSLMethodInfo) -> None:
+        items = index.get(key)
+        if items is None:
+            return
+        try:
+            items.remove(item)
+        except ValueError:
+            return
+        if not items:
+            del index[key]
+
+    def _unindex_method(self, method_info: BSLMethodInfo) -> None:
+        method = method_info.method
+        self._discard_index_item(self._method_name_index, method.name.lower(), method_info)
+        if method_info.module:
+            self._discard_index_item(self._method_module_index, method_info.module.lower(), method_info)
+        if method.is_export:
+            try:
+                self._method_export_index.remove(method_info)
+            except ValueError:
+                pass
+
+    def _rebuild_calls_by_file(self) -> None:
+        self._calls_by_file.clear()
+        for call_list in self.calls.values():
+            for call_info in call_list:
+                self._calls_by_file.setdefault(call_info.filename, []).append(call_info)
+
+    @_with_cache_lock
     def add_method(self, method: BSLMethod, filename: str, module: str = "") -> None:
         """
         Добавить метод в кеш.
@@ -68,26 +143,9 @@ class BSLCache:
         :param filename: Путь к файлу
         :param module: Имя модуля (опционально)
         """
-        method_info = BSLMethodInfo(method=method, filename=filename, module=module)
-        index = len(self.methods)
-        self.methods.append(method_info)
-        self._indexed_files.add(filename)
+        self._add_method_info(BSLMethodInfo(method=method, filename=filename, module=module))
 
-        # Обновляем индексы
-        method_name_lower = method.name.lower()
-        if method_name_lower not in self._method_name_index:
-            self._method_name_index[method_name_lower] = []
-        self._method_name_index[method_name_lower].append(index)
-
-        if module:
-            module_lower = module.lower()
-            if module_lower not in self._method_module_index:
-                self._method_module_index[module_lower] = []
-            self._method_module_index[module_lower].append(index)
-
-        if method.is_export:
-            self._method_export_index.append(index)
-
+    @_with_cache_lock
     def add_module_var(self, var: BSLModuleVar, filename: str) -> None:
         """
         Добавить переменную модуля в кеш.
@@ -100,6 +158,7 @@ class BSLCache:
         self.module_vars[filename].append(var)
         self._indexed_files.add(filename)
 
+    @_with_cache_lock
     def add_call(self, call: BSLCallPosition, filename: str, method_name: str, module: str = "") -> None:
         """
         Добавить информацию о вызове в кеш.
@@ -117,8 +176,10 @@ class BSLCache:
             filename=filename, call=call_name, line=call.line, character=call.character, method_name=method_name, module=module
         )
         self.calls[call_name].append(call_info)
+        self._calls_by_file.setdefault(filename, []).append(call_info)
         self._indexed_files.add(filename)
 
+    @_with_cache_lock
     def add_methods_batch(self, methods_data: list[tuple[BSLMethod, str, str]]) -> None:
         """
         Добавить несколько методов в кеш пакетно (оптимизация производительности).
@@ -128,6 +189,7 @@ class BSLCache:
         for method, filename, module in methods_data:
             self.add_method(method, filename, module)
 
+    @_with_cache_lock
     def add_module_vars_batch(self, vars_data: list[tuple[BSLModuleVar, str]]) -> None:
         """
         Добавить несколько переменных модуля в кеш пакетно (оптимизация производительности).
@@ -137,6 +199,7 @@ class BSLCache:
         for var, filename in vars_data:
             self.add_module_var(var, filename)
 
+    @_with_cache_lock
     def add_calls_batch(self, calls_data: list[tuple[BSLCallPosition, str, str, str]]) -> None:
         """
         Добавить несколько вызовов в кеш пакетно (оптимизация производительности).
@@ -146,6 +209,7 @@ class BSLCache:
         for call, filename, method_name, module in calls_data:
             self.add_call(call, filename, method_name, module)
 
+    @_with_cache_lock
     def add_module(self, module_info: BSLModuleInfo) -> None:
         """
         Добавить метаданные модуля в кеш.
@@ -154,6 +218,7 @@ class BSLCache:
         """
         self.modules.append(module_info)
 
+    @_with_cache_lock
     def find_methods(self, query: dict[str, Any] | None = None) -> list[BSLMethodInfo]:
         """
         Поиск методов по запросу (аналог LokiJS .find()).
@@ -169,93 +234,61 @@ class BSLCache:
         :return: Список найденных методов
         """
         if query is None or not query:
-            return self.methods.copy()
+            return self._all_methods()
 
-        # Начинаем с полного списка индексов
-        candidate_indices: set[int] | None = None
+        candidates: set[BSLMethodInfo] | None = None
 
-        # Фильтр по имени
         if "name" in query:
             name_pattern = query["name"]
             if isinstance(name_pattern, dict) and "$regex" in name_pattern:
-                # Regex поиск
                 pattern = re.compile(name_pattern["$regex"], re.IGNORECASE)
-                name_indices = set()
-                for name, indices in self._method_name_index.items():
+                name_matches: set[BSLMethodInfo] = set()
+                for name, infos in self._method_name_index.items():
                     if pattern.search(name):
-                        name_indices.update(indices)
-                candidate_indices = name_indices if candidate_indices is None else candidate_indices & name_indices
+                        name_matches.update(infos)
+                candidates = name_matches if candidates is None else candidates & name_matches
             else:
-                # Точное совпадение
                 name_lower = str(name_pattern).lower()
-                name_indices = set(self._method_name_index.get(name_lower, []))
-                candidate_indices = name_indices if candidate_indices is None else candidate_indices & name_indices
+                name_matches = set(self._method_name_index.get(name_lower, []))
+                candidates = name_matches if candidates is None else candidates & name_matches
 
-        # Фильтр по модулю
         if "module" in query:
             module_pattern = query["module"]
             if isinstance(module_pattern, dict) and "$regex" in module_pattern:
-                # Regex поиск
                 pattern = re.compile(module_pattern["$regex"], re.IGNORECASE)
-                module_indices = set()
-                for module, indices in self._method_module_index.items():
+                module_matches: set[BSLMethodInfo] = set()
+                for module, infos in self._method_module_index.items():
                     if pattern.search(module):
-                        module_indices.update(indices)
-                if candidate_indices is not None:
-                    candidate_indices &= module_indices
-                else:
-                    candidate_indices = module_indices
+                        module_matches.update(infos)
+                candidates = module_matches if candidates is None else candidates & module_matches
             else:
-                # Точное совпадение
                 module_lower = str(module_pattern).lower()
-                module_indices = set(self._method_module_index.get(module_lower, []))
-                if candidate_indices is not None:
-                    candidate_indices &= module_indices
-                else:
-                    candidate_indices = module_indices
+                module_matches = set(self._method_module_index.get(module_lower, []))
+                candidates = module_matches if candidates is None else candidates & module_matches
 
-        # Фильтр по экспорту
         if "is_export" in query or "isExport" in query:
             is_export = query.get("is_export", query.get("isExport", False))
-            export_indices = set(self._method_export_index)
-            if candidate_indices is not None:
-                if is_export:
-                    candidate_indices &= export_indices
-                else:
-                    candidate_indices -= export_indices
+            export_matches = set(self._method_export_index)
+            if candidates is not None:
+                candidates = candidates & export_matches if is_export else candidates - export_matches
             else:
-                if is_export:
-                    candidate_indices = export_indices
-                else:
-                    candidate_indices = set(range(len(self.methods))) - export_indices
+                candidates = export_matches if is_export else set(self._all_methods()) - export_matches
 
-        # Если нет кандидатов по индексам, используем все методы
-        if candidate_indices is None:
-            candidate_indices = set(range(len(self.methods)))
+        if candidates is None:
+            candidates = set(self._all_methods())
 
-        # Применяем остальные фильтры (которые требуют проверки самих методов)
         results: list[BSLMethodInfo] = []
-        for idx in candidate_indices:
-            if idx >= len(self.methods):
-                continue
-
-            method_info = self.methods[idx]
+        for method_info in candidates:
             method = method_info.method
-
-            # Фильтр по контексту
-            if "context" in query:
-                if method.context != query["context"]:
-                    continue
-
-            # Фильтр по типу (процедура/функция)
-            if "isproc" in query:
-                if method.isproc != query["isproc"]:
-                    continue
-
+            if "context" in query and method.context != query["context"]:
+                continue
+            if "isproc" in query and method.isproc != query["isproc"]:
+                continue
             results.append(method_info)
 
         return results
 
+    @_with_cache_lock
     def find_calls(self, call_name: str) -> list[BSLCallInfo]:
         """
         Найти все вызовы процедуры/функции.
@@ -265,6 +298,7 @@ class BSLCache:
         """
         return self.calls.get(call_name, []).copy()
 
+    @_with_cache_lock
     def find_methods_by_module(self, module: str) -> list[BSLMethodInfo]:
         """
         Найти все методы в указанном модуле.
@@ -274,6 +308,7 @@ class BSLCache:
         """
         return self.find_methods({"module": module})
 
+    @_with_cache_lock
     def find_exported_methods(self, module: str | None = None) -> list[BSLMethodInfo]:
         """
         Найти все экспортированные методы.
@@ -286,17 +321,20 @@ class BSLCache:
             query["module"] = module
         return self.find_methods(query)
 
+    @_with_cache_lock
     def clear(self) -> None:
         """Очистить весь кеш."""
-        self.methods.clear()
         self.module_vars.clear()
         self.calls.clear()
         self.modules.clear()
+        self._methods_by_file.clear()
+        self._calls_by_file.clear()
         self._method_name_index.clear()
         self._method_module_index.clear()
         self._method_export_index.clear()
         self._indexed_files.clear()
 
+    @_with_cache_lock
     def has_file(self, filename: str) -> bool:
         """
         Whether any data for ``filename`` is present in the cache.
@@ -306,80 +344,72 @@ class BSLCache:
         """
         return filename in self._indexed_files
 
+    @_with_cache_lock
     def remove_file_data(self, filename: str) -> None:
         """
         Удалить все данные конкретного файла из кеша.
 
         :param filename: Относительный путь к файлу
         """
-        # 1. Удаление методов
-        # Собираем индексы методов для данного файла (начиная с конца, чтобы не сломать индексы)
-        indices_to_remove: list[int] = []
-        for idx in range(len(self.methods) - 1, -1, -1):
-            if self.methods[idx].filename == filename:
-                indices_to_remove.append(idx)
+        for method_info in self._methods_by_file.pop(filename, []):
+            self._unindex_method(method_info)
 
-        # Удаляем методы начиная с конца списка
-        for idx in indices_to_remove:
-            self.methods.pop(idx)
-
-        # Перестраиваем все индексы после удаления
-        self._rebuild_indices()
-
-        # 2. Удаление переменных модуля
         self.module_vars.pop(filename, None)
 
-        # 3. Удаление вызовов
-        # Проходим по всем ключам в calls и удаляем вызовы для данного файла
-        calls_to_remove: list[str] = []
-        for call_name, call_list in self.calls.items():
-            # Фильтруем вызовы, оставляя только те, что не относятся к удаляемому файлу
-            filtered_calls = [call for call in call_list if call.filename != filename]
-            if not filtered_calls:
-                # Если список стал пустым, помечаем ключ для удаления
-                calls_to_remove.append(call_name)
+        affected_call_names = {call.call for call in self._calls_by_file.pop(filename, [])}
+        for call_name in affected_call_names:
+            remaining = [call for call in self.calls.get(call_name, []) if call.filename != filename]
+            if remaining:
+                self.calls[call_name] = remaining
             else:
-                # Обновляем список вызовов
-                self.calls[call_name] = filtered_calls
+                self.calls.pop(call_name, None)
 
-        # Удаляем ключи с пустыми списками
-        for call_name in calls_to_remove:
-            self.calls.pop(call_name, None)
-
-        # 4. Удаление модулей
         self.modules = [module for module in self.modules if module.filename != filename]
-
-        # 5. Удаление из набора проиндексированных файлов
         self._indexed_files.discard(filename)
 
+    @_with_cache_lock
+    def replace_file_index(
+        self,
+        filename: str,
+        methods_data: list[tuple[BSLMethod, str, str]] | None = None,
+        vars_data: list[tuple[BSLModuleVar, str]] | None = None,
+        calls_data: list[tuple[BSLCallPosition, str, str, str]] | None = None,
+    ) -> None:
+        """
+        Atomically replace all cached data for one file.
+
+        :param filename: relative path to the file
+        :param methods_data: methods to index, as (method, filename, module)
+        :param vars_data: module variables, as (var, filename)
+        :param calls_data: calls, as (call, filename, method_name, module)
+        """
+        if filename in self._indexed_files:
+            self.remove_file_data(filename)
+        if methods_data:
+            self.add_methods_batch(methods_data)
+        if vars_data:
+            self.add_module_vars_batch(vars_data)
+        if calls_data:
+            self.add_calls_batch(calls_data)
+
     def _rebuild_indices(self) -> None:
-        """
-        Перестроить все индексы после изменения списка methods.
-        """
+        """Rebuild name/module/export indexes from ``_methods_by_file``."""
         self._method_name_index.clear()
         self._method_module_index.clear()
         self._method_export_index.clear()
 
-        for idx, method_info in enumerate(self.methods):
-            method = method_info.method
+        for file_methods in self._methods_by_file.values():
+            for method_info in file_methods:
+                method = method_info.method
+                name_lower = method.name.lower()
+                self._method_name_index.setdefault(name_lower, []).append(method_info)
+                if method_info.module:
+                    module_lower = method_info.module.lower()
+                    self._method_module_index.setdefault(module_lower, []).append(method_info)
+                if method.is_export:
+                    self._method_export_index.append(method_info)
 
-            # Индекс по имени метода
-            method_name_lower = method.name.lower()
-            if method_name_lower not in self._method_name_index:
-                self._method_name_index[method_name_lower] = []
-            self._method_name_index[method_name_lower].append(idx)
-
-            # Индекс по модулю
-            if method_info.module:
-                module_lower = method_info.module.lower()
-                if module_lower not in self._method_module_index:
-                    self._method_module_index[module_lower] = []
-                self._method_module_index[module_lower].append(idx)
-
-            # Индекс экспортированных методов
-            if method.is_export:
-                self._method_export_index.append(idx)
-
+    @_with_cache_lock
     def get_stats(self) -> dict[str, int]:
         """
         Получить статистику по кешу.
@@ -387,7 +417,7 @@ class BSLCache:
         :return: Словарь со статистикой
         """
         return {
-            "methods": len(self.methods),
+            "methods": sum(len(file_methods) for file_methods in self._methods_by_file.values()),
             "exported_methods": len(self._method_export_index),
             "module_vars": sum(len(vars_list) for vars_list in self.module_vars.values()),
             "calls": sum(len(calls_list) for calls_list in self.calls.values()),
@@ -396,6 +426,7 @@ class BSLCache:
             "indexed_files": len(self._indexed_files),
         }
 
+    @_with_cache_lock
     def to_persistable_state(self) -> dict[str, Any]:
         """
         Snapshot suitable for pickling (indices are rebuilt on load).
@@ -403,12 +434,13 @@ class BSLCache:
         :return: serializable state dict
         """
         return {
-            "methods": list(self.methods),
+            "methods": self._all_methods(),
             "module_vars": dict(self.module_vars),
             "calls": dict(self.calls),
             "modules": list(self.modules),
         }
 
+    @_with_cache_lock
     def load_persistable_state(self, state: dict[str, Any]) -> None:
         """
         Restore cache contents from a previously persisted snapshot.
@@ -416,19 +448,18 @@ class BSLCache:
         :param state: state produced by ``to_persistable_state``
         """
         self.clear()
-        self.methods = list(state.get("methods", []))
         self.module_vars = dict(state.get("module_vars", {}))
         self.calls = dict(state.get("calls", {}))
         self.modules = list(state.get("modules", []))
+        for method_info in state.get("methods", []):
+            self._methods_by_file.setdefault(method_info.filename, []).append(method_info)
         self._rebuild_indices()
+        self._rebuild_calls_by_file()
         self._rebuild_indexed_files()
 
     def _rebuild_indexed_files(self) -> None:
         """Rebuild ``_indexed_files`` from methods, vars and calls."""
         self._indexed_files.clear()
-        for method_info in self.methods:
-            self._indexed_files.add(method_info.filename)
+        self._indexed_files.update(self._methods_by_file.keys())
         self._indexed_files.update(self.module_vars.keys())
-        for call_list in self.calls.values():
-            for call_info in call_list:
-                self._indexed_files.add(call_info.filename)
+        self._indexed_files.update(self._calls_by_file.keys())
