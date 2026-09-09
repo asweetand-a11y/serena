@@ -958,6 +958,8 @@ class SerenaConfig(SharedConfig, ModeSelectionDefinitionWithBaseModes):
     the path to the configuration file to which updates of the configuration shall be saved;
     if None, the configuration is not saved to disk
     """
+    _projects_at_load: set[str] = field(default_factory=set, repr=False)
+    """Project roots present when this configuration instance was last persisted."""
 
     # *** static members ***
 
@@ -1095,6 +1097,8 @@ class SerenaConfig(SharedConfig, ModeSelectionDefinitionWithBaseModes):
                 project_config=project_config,
             )
             instance.projects.append(project)
+
+        instance._projects_at_load = {str(project.project_root) for project in instance.projects}
 
         # determine language backend
         language_backend = get_dataclass_default(SerenaConfig, "language_backend")
@@ -1295,20 +1299,38 @@ class SerenaConfig(SharedConfig, ModeSelectionDefinitionWithBaseModes):
         self._persist_projects()
 
     def _persist_projects(self) -> None:
-        """
-        Persists ONLY the registered-projects list, leaving every other setting at its on-disk value.
+        """Persist this instance's project-list changes without undoing concurrent edits.
 
-        Project (de)registration can happen while a session is running with transient runtime overrides applied
-        to this in-memory instance (e.g. ``start-mcp-server --language-backend`` / ``--log-level``). A full
-        :meth:`save` would write those overrides back to the global config, silently clobbering the user's
-        settings. Instead we re-load the persisted config, copy in the current project list, and save that — so
-        only ``projects`` is ever mutated on disk.
+        The disk copy is reloaded because multiple agent processes may update the global
+        configuration concurrently. The instance baseline lets us distinguish this instance's
+        removals and additions from changes made by another process: unchanged baseline projects
+        follow the current disk copy, while removed baseline projects are filtered out and newly
+        added instance projects are appended.
         """
         if self.config_file_path is None:
             return
+
         persisted = SerenaConfig.from_config_file()
-        persisted.projects = list(self.projects)
+        current_projects_by_path = {str(project.project_root): project for project in self.projects}
+        current_paths = set(current_projects_by_path)
+        removed_paths = self._projects_at_load - current_paths
+        added_paths = current_paths - self._projects_at_load
+
+        combined_projects = []
+        handled_project_paths = set()
+        for project in persisted.projects:
+            project_path = str(project.project_root)
+            if project_path not in removed_paths:
+                combined_projects.append(project)
+                handled_project_paths.add(project_path)
+        for project_path in added_paths:
+            if project_path not in handled_project_paths:
+                combined_projects.append(current_projects_by_path[project_path])
+                handled_project_paths.add(project_path)
+
+        persisted.projects = combined_projects
         persisted._save()
+        self._projects_at_load = current_paths
 
     def _save(self) -> None:
         """

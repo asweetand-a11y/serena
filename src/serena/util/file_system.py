@@ -1,5 +1,9 @@
 import logging
 import os
+import re
+import stat
+import tempfile
+import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -10,6 +14,82 @@ from pathspec import PathSpec
 from sensai.util.logging import LogTime
 
 log = logging.getLogger(__name__)
+
+
+def write_file_atomic(path: str, content: str, *, encoding: str, newline: str | None = None) -> None:
+    """
+    Write ``content`` to ``path`` atomically: the content is written to a temporary file in the
+    same directory first, then swapped into place with ``os.replace``. A plain
+    ``open(path, "w")`` is not atomic: it truncates the file before the new content is complete,
+    so a crash, an out-of-memory kill, or a disk-full error partway through the write leaves
+    ``path`` holding neither the old content nor the new one.
+
+    :param path: the path to write to
+    :param content: the text content to write
+    :param encoding: the encoding to use for the write
+    :param newline: passed through to the underlying ``open()`` call to control newline translation
+    """
+    target_dir = os.path.dirname(path) or "."
+    try:
+        existing_mode: int | None = stat.S_IMODE(os.stat(path).st_mode)
+    except FileNotFoundError:
+        existing_mode = None
+    fd, tmp_path = tempfile.mkstemp(dir=target_dir, prefix=os.path.basename(path) + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding=encoding, newline=newline) as f:
+            f.write(content)
+        # mkstemp creates the temp file with mode 0600 regardless of umask, which would silently
+        # tighten an existing file's permissions (e.g. 0644 -> 0600) on replace. Restore the
+        # original mode, or fall back to what a plain open(path, "w") would have produced for a
+        # new file (0666 masked by the process umask).
+        os.chmod(tmp_path, existing_mode if existing_mode is not None else _new_file_mode())
+        _replace_with_retry(tmp_path, path)
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
+def _new_file_mode() -> int:
+    """The mode a plain ``open(path, "w")`` would give a brand-new file: 0o666 masked by the
+    process umask. Reading the umask requires setting it, so the previous value is restored
+    immediately after.
+    """
+    current_umask = os.umask(0o022)
+    os.umask(current_umask)
+    return 0o666 & ~current_umask
+
+
+def _replace_with_retry(src: str, dst: str, *, attempts: int = 10, delay_s: float = 0.05) -> None:
+    """``os.replace(src, dst)`` with a short retry on a Windows sharing violation: on Windows the
+    atomic rename fails with ``PermissionError`` if another process momentarily holds ``dst`` open
+    (e.g. a second Serena process reading the same memory or source file). A brief bounded retry
+    rides out that contention; the temp file is still complete, so this never falls back to a
+    non-atomic write.
+    """
+    for attempt in range(attempts):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(delay_s)
+
+
+# Characters meaningful to pathspec's gitignore grammar: glob wildcards, bracket expressions,
+# the escape character itself, and '!'/'#' which change a whole pattern's meaning when they
+# are its first character. Backslash-escaping them makes a literal name safe to interpolate.
+_GITIGNORE_PATTERN_SPECIAL_CHARS_RE = re.compile(r"([\\*?\[\]!#])")
+
+
+def _escape_gitignore_path_component(component: str) -> str:
+    """Escape gitignore/pathspec pattern metacharacters in a single path component (no
+    separators) so it is matched as a literal name rather than as glob syntax.
+    """
+    return _GITIGNORE_PATTERN_SPECIAL_CHARS_RE.sub(r"\\\1", component)
 
 
 class ScanResult(NamedTuple):
@@ -223,10 +303,20 @@ class GitignoreParser:
         """
         patterns = []
 
-        # Get the relative path from repo root to the gitignore directory
-        rel_dir = os.path.relpath(gitignore_dir, self.repo_root)
+        # Get the relative path from repo root to the gitignore directory. Normalize to
+        # forward slashes immediately: os.path.relpath returns native separators, but
+        # gitignore/pathspec patterns are always POSIX-style, and on Windows os.sep is
+        # backslash -- the same character pathspec uses as its escape character. Building
+        # the pattern with any raw os.sep would make a later blanket backslash->slash
+        # normalization indistinguishable from the escape backslashes below.
+        rel_dir = os.path.relpath(gitignore_dir, self.repo_root).replace(os.sep, "/")
         if rel_dir == ".":
             rel_dir = ""
+
+        # rel_dir is a filesystem path, but the code below interpolates it into pattern
+        # position; escape each of its components so a directory name containing pattern
+        # metacharacters (e.g. "***") is matched literally instead of as glob syntax.
+        rel_dir_pattern = "/".join(_escape_gitignore_path_component(part) for part in rel_dir.split("/")) if rel_dir else rel_dir
 
         for line in content.splitlines():
             # Strip trailing whitespace (but preserve leading whitespace for now)
@@ -256,20 +346,23 @@ class GitignoreParser:
             if is_anchored:
                 line = line[1:]
 
-            # Adjust pattern based on gitignore file location
+            # Adjust pattern based on gitignore file location. Joined with a literal "/",
+            # never os.path.join/os.sep: gitignore patterns are always POSIX-style, and on
+            # Windows os.sep is backslash, indistinguishable from the escape backslashes
+            # rel_dir_pattern may already contain.
             if rel_dir:
                 if is_anchored:
                     # Anchored patterns are relative to the gitignore directory
-                    adjusted_pattern = os.path.join(rel_dir, line)
+                    adjusted_pattern = f"{rel_dir_pattern}/{line}"
                 else:
                     # Non-anchored patterns can match anywhere below the gitignore directory
                     # We need to preserve this behavior
                     if line.startswith("**/"):
                         # Even if pattern starts with **, it should still be scoped to the subdirectory
-                        adjusted_pattern = os.path.join(rel_dir, line)
+                        adjusted_pattern = f"{rel_dir_pattern}/{line}"
                     else:
                         # Add the directory prefix but also allow matching in subdirectories
-                        adjusted_pattern = os.path.join(rel_dir, "**", line)
+                        adjusted_pattern = f"{rel_dir_pattern}/**/{line}"
             else:
                 if is_anchored:
                     # Anchored patterns in root should only match at root level
@@ -282,9 +375,6 @@ class GitignoreParser:
             # Re-add negation if needed
             if is_negation:
                 adjusted_pattern = "!" + adjusted_pattern
-
-            # Normalize path separators to forward slashes (gitignore uses forward slashes)
-            adjusted_pattern = adjusted_pattern.replace(os.sep, "/")
 
             patterns.append(adjusted_pattern)
 

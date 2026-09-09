@@ -1,11 +1,103 @@
 import os
 import shutil
+import sys
 import tempfile
 from pathlib import Path
 
+import pytest
 from pathspec import PathSpec
 
-from serena.util.file_system import GitignoreParser, GitignoreSpec, match_path
+from serena.util import file_system
+from serena.util.file_system import GitignoreParser, GitignoreSpec, _escape_gitignore_path_component, match_path, write_file_atomic
+
+
+class TestWriteFileAtomic:
+    """Regression tests for issue #1958: a plain ``open(path, "w")`` truncates the file before
+    the new content is complete, so a crash, OOM kill, or disk-full error partway through the
+    write loses the previous content. ``write_file_atomic`` must never expose that intermediate
+    state.
+    """
+
+    def test_writes_new_file(self, tmp_path):
+        target = tmp_path / "notes.md"
+        write_file_atomic(str(target), "hello", encoding="utf-8")
+        assert target.read_text(encoding="utf-8") == "hello"
+
+    def test_overwrites_existing_file(self, tmp_path):
+        target = tmp_path / "notes.md"
+        target.write_text("old", encoding="utf-8")
+        write_file_atomic(str(target), "new", encoding="utf-8")
+        assert target.read_text(encoding="utf-8") == "new"
+
+    def test_no_leftover_temp_file_after_success(self, tmp_path):
+        target = tmp_path / "notes.md"
+        write_file_atomic(str(target), "hello", encoding="utf-8")
+        assert list(tmp_path.iterdir()) == [target]
+
+    def test_respects_newline_argument(self, tmp_path):
+        target = tmp_path / "notes.md"
+        write_file_atomic(str(target), "a\nb\n", encoding="utf-8", newline="\r\n")
+        assert target.read_bytes() == b"a\r\nb\r\n"
+
+    def test_preserves_original_content_when_write_is_interrupted(self, tmp_path, monkeypatch):
+        """The core invariant: an interrupted write (process killed / OOM / disk full while the
+        temp file is being written) must leave the target file exactly as it was, never
+        truncated or half-overwritten.
+        """
+        target = tmp_path / "notes.md"
+        original = "original content that must survive" * 20
+        target.write_text(original, encoding="utf-8")
+
+        real_fdopen = os.fdopen
+
+        def crashing_fdopen(fd, *args, **kwargs):
+            f = real_fdopen(fd, *args, **kwargs)
+            real_write = f.write
+
+            def crashing_write(data):
+                # write a truncated prefix to the temp file, flush it to disk, then blow up,
+                # simulating a crash after the OS has seen some but not all of the new content.
+                real_write(data[: len(data) // 4])
+                f.flush()
+                raise RuntimeError("simulated crash mid-write")
+
+            f.write = crashing_write
+            return f
+
+        monkeypatch.setattr(file_system.os, "fdopen", crashing_fdopen)
+
+        with pytest.raises(RuntimeError, match="simulated crash mid-write"):
+            write_file_atomic(str(target), "brand new content that never fully arrives" * 20, encoding="utf-8")
+
+        assert target.read_text(encoding="utf-8") == original
+        # the partially-written temp file must be cleaned up, not left behind
+        assert list(tmp_path.iterdir()) == [target]
+
+    def test_replace_with_retry_survives_transient_permission_error(self, tmp_path, monkeypatch):
+        """Mirrors ``util/yaml.py``'s ``_replace_with_retry``: on Windows, ``os.replace`` can
+        fail with a transient ``PermissionError`` while another process momentarily holds the
+        destination open. The write must not be treated as failed while the temp file is still
+        complete and a retry can still succeed.
+        """
+        target = tmp_path / "notes.md"
+        target.write_text("old", encoding="utf-8")
+
+        real_replace = os.replace
+        calls = {"n": 0}
+
+        def flaky_replace(src, dst):
+            calls["n"] += 1
+            if calls["n"] < 3:
+                raise PermissionError("simulated transient sharing violation")
+            return real_replace(src, dst)
+
+        monkeypatch.setattr(file_system.os, "replace", flaky_replace)
+        monkeypatch.setattr(file_system.time, "sleep", lambda _seconds: None)
+
+        write_file_atomic(str(target), "new", encoding="utf-8")
+
+        assert calls["n"] == 3
+        assert target.read_text(encoding="utf-8") == "new"
 
 
 class TestGitignoreParser:
@@ -714,6 +806,81 @@ src/*.o
 
         # foo.txt in other/ should NOT be ignored (outside foo/ subtree)
         assert not parser.should_ignore("other/foo.txt"), "other/foo.txt should NOT be ignored by foo/.gitignore"
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="'*' is illegal in Windows filenames; this directory name cannot exist there")
+    def test_gitignore_dir_name_with_glob_metachars_is_not_a_wildcard(self):
+        """A directory named with glob metacharacters (e.g. a stray '***' venv) must be
+        matched literally, not interpreted as a pattern (issue #1806).
+        """
+        test_dir = self.repo_path / "test_metachar_dirname"
+        test_dir.mkdir()
+        (test_dir / "pkg").mkdir()
+        (test_dir / "***").mkdir()
+
+        (test_dir / "pkg" / "mod.py").touch()
+        (test_dir / "***" / "junk.txt").touch()
+
+        gitignore = test_dir / "***" / ".gitignore"
+        gitignore.write_text("*\n")
+
+        parser = GitignoreParser(str(test_dir))
+
+        # pkg/mod.py is outside the "***" directory and must not be affected by its gitignore
+        assert not parser.should_ignore("pkg/mod.py"), "pkg/mod.py should not be ignored by ***/.gitignore"
+
+        # junk.txt inside "***" is still ignored by its own gitignore's "*" pattern
+        assert parser.should_ignore("***/junk.txt"), "***/junk.txt should be ignored by its own gitignore"
+
+    def test_gitignore_dir_name_with_metachars_anchored_pattern(self):
+        """Same as above, for the anchored-pattern join site."""
+        test_dir = self.repo_path / "test_metachar_dirname_anchored"
+        test_dir.mkdir()
+        (test_dir / "pkg").mkdir()
+        (test_dir / "a[1]").mkdir()
+
+        (test_dir / "pkg" / "mod.py").touch()
+        (test_dir / "a[1]" / "mod.py").touch()
+
+        gitignore = test_dir / "a[1]" / ".gitignore"
+        gitignore.write_text("/mod.py\n")
+
+        parser = GitignoreParser(str(test_dir))
+
+        assert not parser.should_ignore("pkg/mod.py"), "pkg/mod.py should not be ignored by a[1]/.gitignore"
+        assert parser.should_ignore("a[1]/mod.py"), "a[1]/mod.py should be ignored by its own /mod.py pattern"
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="'?' is illegal in Windows filenames; this directory name cannot exist there")
+    def test_gitignore_dir_name_with_metachars_implicit_double_star_pattern(self):
+        """A non-anchored pattern with no leading '**/' is joined as (rel_dir, "**", line):
+        the third join site. An unescaped '?' in the directory name would leak the pattern
+        into a sibling directory whose name merely matches the wildcard (issue #1806).
+        """
+        test_dir = self.repo_path / "test_metachar_dirname_implicit_doublestar"
+        test_dir.mkdir()
+        (test_dir / "q?").mkdir()
+        (test_dir / "qA").mkdir()
+        (test_dir / "qA" / "sub").mkdir()
+
+        (test_dir / "qA" / "sub" / "mod.py").touch()
+
+        gitignore = test_dir / "q?" / ".gitignore"
+        gitignore.write_text("mod.py\n")
+
+        parser = GitignoreParser(str(test_dir))
+
+        # "q?/.gitignore" must not reach into the sibling "qA/" directory just because "?"
+        # would match the "A" in "qA" if left as a wildcard.
+        assert not parser.should_ignore("qA/sub/mod.py"), "qA/sub/mod.py should not be ignored by q?/.gitignore"
+
+    def test_escape_gitignore_path_component_escapes_all_metachars(self):
+        """Pure-function coverage for the '*' and '?' escaping cases the two directory-creation
+        tests above cannot exercise on Windows (those characters are illegal in Windows
+        filenames, so this runs on every platform instead of touching the filesystem).
+        """
+        assert _escape_gitignore_path_component("***") == "\\*\\*\\*"
+        assert _escape_gitignore_path_component("q?") == "q\\?"
+        assert _escape_gitignore_path_component("a[1]") == "a\\[1\\]"
+        assert _escape_gitignore_path_component("plain") == "plain"
 
 
 class TestGitignoreParserPermissionError:

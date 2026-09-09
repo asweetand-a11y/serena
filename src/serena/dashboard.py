@@ -207,7 +207,7 @@ class SerenaDashboardAPI:
         self._tool_names = tool_names
         self._agent = agent
         self._host = host
-        self._app = Flask(__name__)
+        self._app = Flask(self.__class__.__name__)
         if trusted_hosts:
             self._app.config["TRUSTED_HOSTS"] = trusted_hosts
         self._tool_usage_stats = tool_usage_stats
@@ -242,8 +242,8 @@ class SerenaDashboardAPI:
             # compare against the running version
             latest_version = Version(latest_serena_version)
             current_version = Version(self._agent.version)
-            log.error("Latest available Serena version on PyPI: %s, current version: %s", latest_version, current_version)
-            if not current_version.is_at_least(*latest_version.components) or True:
+            log.debug("Latest available Serena version on PyPI: %s, current version: %s", latest_version, current_version)
+            if not current_version.is_at_least(*latest_version.components):
                 self._newer_serena_version = latest_serena_version
         except Exception as e:
             log.info("Failed to check for newer Serena version on PyPI: %s", e)
@@ -966,6 +966,8 @@ class SerenaDashboardTrayManager:
     HOST = "127.0.0.1"
     """listen address (local only)"""
 
+    TRUSTED_HOSTS = ["localhost", "127.0.0.1"]
+
     ALIVE_CHECK_INTERVAL_SECONDS = 3
     """interval in seconds between alive checks of registered instances"""
 
@@ -984,7 +986,8 @@ class SerenaDashboardTrayManager:
         self._lock = threading.Lock()
         self._tray_icon: Optional["pystray.Icon"] = None
         self._alive_check_use_pid = alive_check_use_pid
-        self._app = Flask(__name__)
+        self._app = Flask(self.__class__.__name__)
+        self._app.config["TRUSTED_HOSTS"] = self.TRUSTED_HOSTS
         self._setup_routes()
         self._use_pywebview = use_pywebview
 
@@ -1152,6 +1155,7 @@ class SerenaDashboardTrayManager:
                         for port in dead_ports:
                             self._instances.pop(port, None)
                             log.info("Removed unreachable instance on port %d", port)
+                    self._update_menu()
 
                 # terminate if no instances remain
                 with self._lock:
@@ -1195,9 +1199,12 @@ class SerenaDashboardTrayManager:
         # set up tray icon with a dynamic menu (callable returns items on each open)
         kwargs: dict[str, Any] = {}
         if sys.platform == "darwin":
-            from AppKit import NSApplication
+            from AppKit import NSApplication, NSApplicationActivationPolicyAccessory
 
-            kwargs["darwin_nsapplication"] = NSApplication.sharedApplication()
+            nsapp = NSApplication.sharedApplication()
+            # run as an accessory app so that only the menu bar icon is shown (no Dock icon)
+            nsapp.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
+            kwargs["darwin_nsapplication"] = nsapp
 
         self._tray_icon = pystray.Icon(
             "serena_tray_manager",

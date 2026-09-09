@@ -15,7 +15,16 @@ Install the following on your system and ensure they are available on `PATH`:
   - Serena uses `cs` if available; if only `coursier` exists, it will attempt to install `cs`. If neither is present, install Coursier first.
 
 ---
-## Quick Start (Recommended: VS Code + Metals auto‑import)
+## Quick Start
+
+Start Serena in your project root. Metals asks whether to import a workspace it has not seen before, and Serena answers that prompt for it — the build is imported (for sbt, by running `sbt bloopInstall`), `.bloop/` and `.metals/` are created, and cross-file navigation works from there. The first run therefore takes as long as your build takes to load.
+
+Set `auto_import_build: false` under `ls_specific_settings.scala` to decline instead; you then need to import the build yourself by one of the routes below, or cross-file queries will be served by the fallback presentation compiler and see only one file at a time.
+
+Serena answers three of Metals' prompts — “Import build”, “Import changes”, “Connect”. Anything else Metals asks is dismissed and logged, including “Multiple build definitions found. Which would you like to use?”, so a workspace holding more than one kind of build (say both an sbt and a Maven definition) still needs importing by one of the routes below.
+
+---
+## Importing the build yourself (VS Code)
 
 1. Open your Scala project in VS Code.
 2. When prompted by Metals, accept “Import build”. Wait until the import and initial compile/indexing finish.
@@ -25,7 +34,7 @@ Install the following on your system and ensure they are available on `PATH`:
 This flow ensures the `.bloop/` and (if applicable) `.metals/` directories are created and your build is known to the build server that Metals uses.
 
 ---
-## Manual Setup (No VS Code)
+## Importing the build yourself (No VS Code)
 
 Follow these steps if you prefer a manual setup or you are not using VS Code:
 
@@ -62,6 +71,41 @@ These instructions cover the setup for projects that use sbt as the build tool, 
 
 Notes:
 - Ensure you completed the manual or auto‑import steps so that the build is compiled and indexed; otherwise, code navigation and references may be incomplete until the first successful compile.
+
+---
+## Monorepos: builds below the repository root
+
+Metals serves one build per workspace folder, so what it needs is the build roots, not the repository root. Serena detects them: if the repository root is not itself a build root (no `build.sbt`, `build.mill`, `pom.xml`, `.bsp/`, …), it searches up to three levels below for directories that are, and passes those to Metals — one Metals service per build.
+
+Override the detection where it guesses wrong:
+
+```yaml
+# ~/.serena/serena_config.yml or .serena/project.yml
+ls_specific_settings:
+  scala:
+    project_roots: ["backend", "tooling/plugin"]  # relative to the repository root
+    project_root_scan_depth: 3                    # only applies when project_roots is unset
+```
+
+---
+## Waiting for Metals to be ready
+
+Metals needs its build imported, its index built and the project compiled before it can answer a
+cross-file question completely — references in particular come from SemanticDB, which the build
+server writes only as it compiles. Serena waits for all of that, tracking the work-done progress
+Metals reports, before the first such query of a session; a query made earlier would return a
+fraction of the true result and look no different from a complete one.
+
+The first `find_referencing_symbols` of a session therefore takes as long as the project takes to
+compile. Subsequent queries do not wait. Where the default bound is wrong for a large build:
+
+```yaml
+ls_specific_settings:
+  scala:
+    indexing_timeout: 180        # seconds to wait before giving up and answering anyway
+    indexing_start_grace: 15     # seconds to wait for Metals to report anything at all
+    indexing_quiet_period: 3     # seconds of silence that count as "finished"
+```
 
 ---
 ## Running Multiple Metals Instances

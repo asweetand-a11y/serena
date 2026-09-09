@@ -185,6 +185,22 @@ class LanguageServerId(str, Enum):
     Supports .qml files. Requires Qt 6 installation providing qmlls on PATH.
     See https://doc.qt.io/qt-6/qtqml-tool-qmlls.html
     """
+    GLEAM = "gleam"
+    """Gleam language server bundled with the Gleam compiler (`gleam lsp`).
+    Supports .gleam files. Requires the `gleam` binary on PATH.
+    See https://gleam.run/getting-started/installing/ for installation.
+    """
+    NEXTFLOW = "nextflow"
+    """Nextflow language server (https://github.com/nextflow-io/language-server), the one that backs the
+    official VS Code extension. Supports .nf scripts (Nextflow .config files are parsed by the server, but
+    it reports no symbols for them, so they are not treated as source files here).
+    Automatically downloads the language server JAR; requires Java 17+ (JAVA_HOME or 'java' on PATH).
+    """
+    WOLFRAM = "wolfram"
+    """Wolfram Language server using the official WolframResearch LSPServer paclet.
+    Requires Wolfram Mathematica 13.0+ or Wolfram Engine 12.1+.
+    Set WOLFRAM_PATH environment variable or configure ls_path in ls_specific_settings.
+    """
     # Experimental or deprecated Language Servers
     TYPESCRIPT_VTS = "typescript_vts"
     """Use the typescript language server through the natively bundled vscode extension via https://github.com/yioneko/vtsls"""
@@ -212,6 +228,8 @@ class LanguageServerId(str, Enum):
     """PHPantom language server for PHP (instead of Intelephense, which is the default).
     Uses the open-source Rust-based phpantom_lsp binary and can be auto-downloaded.
     """
+    JULIA_FATOU = "julia_fatou"
+    """Fatou language server for Julia (instead of LanguageServer.jl, which is the default)."""
     MARKDOWN = "markdown"
     """Marksman language server for Markdown (experimental).
     Must be explicitly specified as the main language, not auto-detected.
@@ -286,6 +304,14 @@ class LanguageServerId(str, Enum):
     project.yml — Angular LS supersedes both for Angular projects.
     Must be explicitly specified in project.yml.
     """
+    DENO = "deno"
+    """Deno's built-in language server (``deno lsp``) for Deno TypeScript/JavaScript projects.
+    Understands Deno module resolution (``npm:`` / ``jsr:`` / ``https:`` imports) and the
+    ``Deno.*`` globals, which the plain typescript-language-server does not. Overlaps the
+    TypeScript server on file extensions (.ts/.tsx/.js/.jsx/.mts/.cts/.mjs/.cjs), so it is
+    experimental and must be explicitly specified via ``languages: [deno]`` in project.yml;
+    do not also enable typescript for the same files. Requires the ``deno`` CLI on PATH.
+    """
 
     @classmethod
     def iter_all(cls, include_experimental: bool = True, include_non_programming_languages: bool = True) -> Iterable[Self]:
@@ -310,6 +336,7 @@ class LanguageServerId(str, Enum):
             self.RUBY_SOLARGRAPH,
             self.PHP_PHPACTOR,
             self.PHP_PHPANTOM,
+            self.JULIA_FATOU,
             self.MARKDOWN,
             self.LATEX,
             self.YAML,
@@ -321,6 +348,7 @@ class LanguageServerId(str, Enum):
             self.HTML,
             self.SCSS,
             self.ANGULAR,
+            self.DENO,
         }
 
     def is_programming_language(self) -> bool:
@@ -507,7 +535,7 @@ class LanguageServerId(str, Enum):
                 return FilenameMatcher(".tex", ".bib", ".sty", ".cls")
             case self.SCALA:
                 return FilenameMatcher(".scala", ".sbt")
-            case self.JULIA:
+            case self.JULIA | self.JULIA_FATOU:
                 return FilenameMatcher(".jl")
             case self.FORTRAN:
                 return FilenameMatcher(".f90", ".f95", ".f03", ".f08", ".f", ".for", ".fpp", case_sensitive=False)
@@ -572,6 +600,14 @@ class LanguageServerId(str, Enum):
                 return FilenameMatcher(".gd", ".gdscript")
             case self.QML:
                 return FilenameMatcher(".qml")
+            case self.GLEAM:
+                return FilenameMatcher(".gleam")
+            case self.NEXTFLOW:
+                # only scripts: the language server does have a service for .config files, but it provides
+                # no symbols for them, so treating them as source files would only pollute the symbol index
+                return FilenameMatcher(".nf")
+            case self.WOLFRAM:
+                return FilenameMatcher(".wl", ".wls")
             case self.HTML:
                 return FilenameMatcher(".html", ".htm")
             case self.SCSS:
@@ -587,6 +623,14 @@ class LanguageServerId(str, Enum):
                 for prefix in ["c", "m", ""]:
                     for postfix in ["x", ""]:
                         path_patterns.append(f".{prefix}ts{postfix}")
+                return FilenameMatcher(*path_patterns)
+            case self.DENO:
+                # Deno serves the same TS/JS family as the TypeScript server.
+                path_patterns = []
+                for prefix in ["c", "m", ""]:
+                    for postfix in ["x", ""]:
+                        for base_pattern in ["ts", "js"]:
+                            path_patterns.append(f".{prefix}{base_pattern}{postfix}")
                 return FilenameMatcher(*path_patterns)
             case _:
                 raise ValueError(f"Unhandled language: {self}")
@@ -787,6 +831,10 @@ class LanguageServerId(str, Enum):
                 from solidlsp.language_servers.julia_server import JuliaLanguageServer
 
                 return JuliaLanguageServer
+            case self.JULIA_FATOU:
+                from solidlsp.language_servers.fatou_language_server import FatouLanguageServer
+
+                return FatouLanguageServer
             case self.FORTRAN:
                 from solidlsp.language_servers.fortran_language_server import FortranLanguageServer
 
@@ -859,6 +907,18 @@ class LanguageServerId(str, Enum):
                 from solidlsp.language_servers.qml_language_server import QmlLanguageServer
 
                 return QmlLanguageServer
+            case self.GLEAM:
+                from solidlsp.language_servers.gleam_language_server import GleamLanguageServer
+
+                return GleamLanguageServer
+            case self.NEXTFLOW:
+                from solidlsp.language_servers.nextflow_language_server import NextflowLanguageServer
+
+                return NextflowLanguageServer
+            case self.WOLFRAM:
+                from solidlsp.language_servers.wolfram_language_server import WolframLanguageServer
+
+                return WolframLanguageServer
             case self.HTML:
                 from solidlsp.language_servers.vscode_html_language_server import VsCodeHtmlLanguageServer
 
@@ -871,6 +931,10 @@ class LanguageServerId(str, Enum):
                 from solidlsp.language_servers.angular_language_server import AngularLanguageServer
 
                 return AngularLanguageServer
+            case self.DENO:
+                from solidlsp.language_servers.deno_language_server import DenoLanguageServer
+
+                return DenoLanguageServer
             case _:
                 raise ValueError(f"Unhandled language: {self}")
 
