@@ -49,7 +49,7 @@ class TestFindRaschitatZnacheniya:
 
         bsl_ls = None
         for ls in ls_manager.iter_language_servers():
-            if ls.language.value == "bsl":
+            if ls.language_id == "bsl":
                 bsl_ls = ls
                 break
         assert bsl_ls is not None, "BSL языковой сервер должен быть инициализирован"
@@ -124,7 +124,7 @@ class TestFindRaschitatZnacheniya:
             ls_manager = agent.get_language_server_manager()
             if ls_manager:
                 for ls in ls_manager.iter_language_servers():
-                    if ls.language.value == "bsl":
+                    if ls.language_id == "bsl":
                         bsl_ls = ls
                         break
 

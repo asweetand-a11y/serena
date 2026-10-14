@@ -65,20 +65,8 @@ def test_manual_index_and_check_procedure():
         pytest.fail("BSL language server not found")
 
     print("\n[OK] BSL language server найден")
-    print(f"  - enable_local_parser: {bsl_ls.enable_local_parser}")
     print(f"  - _local_cache: {bsl_ls._local_cache is not None}")
     print(f"  - Размер кеша до индексации: {len(bsl_ls._document_symbols_cache)}")
-
-    # Проверяем, нужно ли запускать индексацию
-    if not bsl_ls.enable_local_parser:
-        print("\n[WARNING] enable_local_parser выключен! Включаем...")
-        bsl_ls.enable_local_parser = True
-        if bsl_ls._local_cache is None:
-            from solidlsp.bsl_cache import BSLCache
-
-            bsl_ls._local_cache = BSLCache()
-            bsl_ls._file_content_cache = {}
-            bsl_ls._converted_files = set()
 
     # Запускаем индексацию вручную
     print(f"\n{'=' * 80}")
@@ -114,7 +102,7 @@ def test_manual_index_and_check_procedure():
     print(f"Найдено BSL файлов в src/cf: {len(bsl_files)}")
 
     # Запускаем индексацию через метод BSL language server
-    if bsl_ls.enable_local_parser and bsl_ls._local_cache is not None:
+    if bsl_ls._local_cache is not None:
         print("\nЗапуск индексации через локальный парсер...")
 
         if bsl_files:
@@ -140,8 +128,7 @@ def test_manual_index_and_check_procedure():
         else:
             print("\n[WARNING] Файлы в src/cf не найдены")
     else:
-        print("\n[ERROR] Локальный парсер не доступен для индексации")
-        print(f"  enable_local_parser: {bsl_ls.enable_local_parser}")
+        print("\n[ERROR] Локальный кеш не доступен для индексации")
         print(f"  _local_cache: {bsl_ls._local_cache is not None}")
 
     # Сохраняем кеш

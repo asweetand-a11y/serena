@@ -47,7 +47,7 @@ def test_check_procedure_in_cache():
     # Находим BSL language server
     bsl_ls = None
     for ls in ls_manager.iter_language_servers():
-        if ls.language.value == "bsl":
+        if ls.language_id == "bsl":
             bsl_ls = ls
             break
 
