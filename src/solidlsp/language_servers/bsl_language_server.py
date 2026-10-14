@@ -30,7 +30,7 @@ from overrides import override
 
 from solidlsp import ls_types
 from solidlsp.ls import DocumentSymbols, LSPFileBuffer, SolidLanguageServer, SymbolBody
-from solidlsp.ls_config import LanguageServerConfig, LanguageServerId
+from solidlsp.ls_config import LanguageServerConfig, LanguageServerIdLike
 from solidlsp.ls_process import LanguageServerInterface
 from solidlsp.ls_utils import TextUtils
 from solidlsp.lsp_protocol_handler.lsp_types import DocumentSymbol, SymbolInformation
@@ -45,7 +45,7 @@ class LocalOnlyLanguageServerInterface(LanguageServerInterface):
 
     def __init__(
         self,
-        ls_id: LanguageServerId,
+        ls_id: LanguageServerIdLike,
         determine_log_level: Callable[[str], int],
         logger: Callable[[str, str, StringDict | str], None] | None = None,
         request_timeout: float | None = None,
@@ -692,124 +692,104 @@ class BSLLanguageServer(SolidLanguageServer):
         """
         from pathlib import Path
 
-        # Если указан конкретный файл, используем стандартную реализацию
-        # Пустая строка означает глобальный поиск, обрабатываем как None
-        if within_relative_path is not None and within_relative_path != "":
-            # Обрабатываем как абсолютный, так и относительный путь
-            path_obj = Path(within_relative_path)
+        scoped_relative_path = within_relative_path if within_relative_path else None
+
+        # resolve an explicit file or directory scope against the repository root
+        if scoped_relative_path is not None:
+            path_obj = Path(scoped_relative_path)
             if path_obj.is_absolute():
-                # Если передан абсолютный путь, проверяем, что он находится внутри проекта
                 try:
                     relative_path = str(path_obj.relative_to(Path(self.repository_root_path)))
                     within_abs_path = str(path_obj.resolve())
                 except ValueError:
-                    # Если путь не находится внутри проекта, используем как есть
                     within_abs_path = str(path_obj.resolve())
-                    relative_path = within_relative_path
+                    relative_path = scoped_relative_path
             else:
-                # Если передан относительный путь, преобразуем в абсолютный
-                within_abs_path = os.path.join(self.repository_root_path, within_relative_path)
-                relative_path = within_relative_path
+                within_abs_path = os.path.join(self.repository_root_path, scoped_relative_path)
+                relative_path = scoped_relative_path
 
             if not os.path.exists(within_abs_path):
                 raise FileNotFoundError(f"File or directory not found: {within_abs_path}")
+            if self.is_ignored_path(relative_path):
+                raise ValueError(f"Explicitly requested symbols in '{relative_path}' while the path is ignored")
             if os.path.isfile(within_abs_path):
-                if self.is_ignored_path(relative_path):
-                    log.error("You passed a file explicitly, but it is ignored. This is probably an error. File: %s", relative_path)
-                    return []
-                else:
-                    root_nodes = self.request_document_symbols(relative_path).root_symbols
-                    return root_nodes
+                return self.request_document_symbols(relative_path).root_symbols
 
-        # Используем кеш напрямую для построения дерева символов
+            self.PathWorkspaceStatus.from_abs_resolved_path(Path(within_abs_path).resolve(), self).check_within_workspace_or_raise()
+
+        indexed_workspace_roots = [Path(p).resolve() for p in self.config.get_absolute_workspace_folders(self.repository_root_path)]
+
+        def is_in_indexed_workspace(relative_file_path: str) -> bool:
+            abs_resolved = Path(self.repository_root_path, relative_file_path).resolve()
+            return any(abs_resolved.is_relative_to(root) for root in indexed_workspace_roots)
+
+        def is_within_scope(relative_file_path: str) -> bool:
+            if scoped_relative_path is None:
+                return True
+            try:
+                within_path = Path(scoped_relative_path)
+                if within_path.is_absolute():
+                    try:
+                        within_path = within_path.relative_to(Path(self.repository_root_path))
+                    except ValueError:
+                        return True
+                rel_resolved = Path(self.repository_root_path, relative_file_path).resolve()
+                within_resolved = Path(self.repository_root_path, within_path).resolve()
+                return rel_resolved == within_resolved or rel_resolved.is_relative_to(within_resolved)
+            except Exception as e:
+                log.debug("BSL: Error filtering path %s: %s", relative_file_path, e)
+                return False
+
+        # build the tree from the document-symbols cache when it is populated
         log.debug("BSL: Building symbol tree from cache (optimized path)")
-        log.debug(f"BSL: Cache directory: {self.cache_dir}")
-        log.debug(f"BSL: Cache file: {self.cache_dir / self.DOCUMENT_SYMBOL_CACHE_FILENAME}")
-        log.debug(f"BSL: Cache file exists: {(self.cache_dir / self.DOCUMENT_SYMBOL_CACHE_FILENAME).exists()}")
         document_symbols_snapshot = self._snapshot_document_symbols_cache()
-        log.debug(f"BSL: Number of entries in _document_symbols_cache: {len(document_symbols_snapshot)}")
 
-        # Выводим первые несколько ключей для диагностики
-        sample_keys = list(document_symbols_snapshot.keys())[:5]
-        log.debug(f"BSL: Sample cache keys (first 5): {sample_keys}")
-        for key in sample_keys:
-            log.debug(f"BSL:   - Key type: {type(key)}, value: {key}")
-
-        # Собираем все файлы из кеша
         cached_files: dict[str, tuple[str, DocumentSymbols]] = {}
         ignored_count = 0
         filtered_by_path_count = 0
+        filtered_by_workspace_count = 0
 
         for cache_key, (file_hash, document_symbols) in document_symbols_snapshot.items():
-            # Обрабатываем оба формата ключа: строка или tuple (для обратной совместимости)
             if isinstance(cache_key, tuple):
-                # Старый формат: (relative_file_path, None)
                 relative_file_path = cache_key[0]
             else:
-                # Новый формат: relative_file_path (строка)
                 relative_file_path = cache_key
 
-            # Проверяем, не игнорируется ли путь
             if self.is_ignored_path(relative_file_path):
                 ignored_count += 1
-                # Логируем только первые 5 игнорируемых файлов, чтобы не засорять логи
-                if ignored_count <= 5:
-                    log.debug(f"BSL: Ignoring cached file: {relative_file_path}")
                 continue
-
-            # Фильтруем по within_relative_path, если указан (для директории)
-            # Пустая строка "" означает поиск во всем проекте, не фильтруем
-            if within_relative_path is not None and within_relative_path != "":
-                try:
-                    rel_path = Path(relative_file_path)
-                    within_path = Path(within_relative_path)
-
-                    # Если within_path абсолютный, преобразуем его в относительный для сравнения
-                    if within_path.is_absolute():
-                        try:
-                            within_path = within_path.relative_to(Path(self.repository_root_path))
-                        except ValueError:
-                            # Если путь не находится внутри проекта, пропускаем фильтрацию
-                            pass
-
-                    # Проверяем, что файл находится внутри указанной директории
-                    if not (
-                        str(rel_path).startswith(str(within_path) + os.sep)
-                        or str(rel_path) == str(within_path)
-                        or str(rel_path).startswith(str(within_path))
-                    ):
-                        filtered_by_path_count += 1
-                        log.debug(f"BSL: Filtered out by within_relative_path: {relative_file_path} (within: {within_relative_path})")
-                        continue
-                except Exception as e:
-                    log.debug(f"BSL: Error filtering path {relative_file_path}: {e}")
-                    continue
+            if not is_in_indexed_workspace(relative_file_path):
+                filtered_by_workspace_count += 1
+                continue
+            if not is_within_scope(relative_file_path):
+                filtered_by_path_count += 1
+                continue
 
             cached_files[relative_file_path] = (file_hash, document_symbols)
 
         log.debug(
-            f"BSL: Processed {len(document_symbols_snapshot)} cache entries: {len(cached_files)} added, {ignored_count} ignored, {filtered_by_path_count} filtered by path"
+            "BSL: Processed %s cache entries: %s added, %s ignored, %s filtered by path, %s filtered by workspace",
+            len(document_symbols_snapshot),
+            len(cached_files),
+            ignored_count,
+            filtered_by_path_count,
+            filtered_by_workspace_count,
         )
 
         if not cached_files:
             log.debug("BSL: No cached files found, falling back to standard implementation")
-            return super().request_full_symbol_tree(within_relative_path=within_relative_path)
+            return super().request_full_symbol_tree(within_relative_path=scoped_relative_path)
 
-        # Группируем файлы по директориям
         directory_structure: dict[str, list[ls_types.UnifiedSymbolInformation]] = {}
 
         for relative_file_path, (file_hash, document_symbols) in cached_files.items():
-            # Получаем директорию файла
             file_path_obj = Path(relative_file_path)
             dir_path = str(file_path_obj.parent) if file_path_obj.parent != Path(".") else "."
 
-            # Получаем содержимое файла для создания file_range
-            # Используем кеш содержимого, если доступен
             file_content = ""
             if hasattr(self, "_file_content_cache") and relative_file_path in self._file_content_cache:
                 file_content = self._file_content_cache[relative_file_path]
             else:
-                # Читаем файл, если нет в кеше
                 abs_path = os.path.join(self.repository_root_path, relative_file_path)
                 try:
                     with open(abs_path, encoding="utf-8", errors="ignore") as f:
@@ -818,13 +798,11 @@ class BSLLanguageServer(SolidLanguageServer):
                     log.debug(f"Failed to read file {relative_file_path} for symbol tree: {e}")
                     continue
 
-            # Создаем file_range
             file_range = self._get_range_from_file_content(file_content)
 
             # shallow copies so linking parent does not mutate the cached document symbols (#2126)
             file_root_nodes = [r.copy() for r in document_symbols.root_symbols]
 
-            # Создаем символ файла
             file_symbol = ls_types.UnifiedSymbolInformation(
                 name=os.path.splitext(file_path_obj.name)[0],
                 kind=ls_types.SymbolKind.File,
@@ -839,34 +817,24 @@ class BSLLanguageServer(SolidLanguageServer):
                 children=file_root_nodes,
             )
 
-            # Устанавливаем parent для дочерних символов
             for child in file_root_nodes:
                 child["parent"] = file_symbol
 
-            # Добавляем в структуру директорий
             if dir_path not in directory_structure:
                 directory_structure[dir_path] = []
             directory_structure[dir_path].append(file_symbol)
 
-        # Строим иерархию директорий
         result: list[ls_types.UnifiedSymbolInformation] = []
-
-        # Сортируем директории для правильного построения дерева
         sorted_dirs = sorted(directory_structure.keys(), key=lambda x: (x.count(os.sep), x))
-
-        # Создаем словарь для быстрого доступа к символам директорий
         dir_symbols: dict[str, ls_types.UnifiedSymbolInformation] = {}
 
         for dir_path in sorted_dirs:
             file_symbols = directory_structure[dir_path]
-
-            # Создаем символы для всех родительских директорий, если их еще нет
             current_path = dir_path
             parent_dir_symbol: ls_types.UnifiedSymbolInformation | None = None
 
             while current_path != ".":
                 if current_path not in dir_symbols:
-                    # Проверяем, не игнорируется ли директория
                     if self.is_ignored_path(current_path):
                         break
 
@@ -897,15 +865,12 @@ class BSLLanguageServer(SolidLanguageServer):
                     parent_dir_symbol = dir_symbols[current_path]
                     break
 
-                # Переходим к родительской директории
                 parent_path = str(Path(current_path).parent) if Path(current_path).parent != Path(".") else "."
-                if parent_path == current_path:  # Защита от бесконечного цикла
+                if parent_path == current_path:
                     break
                 current_path = parent_path
 
-            # Добавляем файлы в соответствующую директорию
             if dir_path == ".":
-                # Файлы в корне
                 result.extend(file_symbols)
             else:
                 if dir_path in dir_symbols:
@@ -914,7 +879,6 @@ class BSLLanguageServer(SolidLanguageServer):
                     for file_symbol in file_symbols:
                         file_symbol["parent"] = dir_symbol
                 else:
-                    # Если директория не была создана (например, игнорируется), добавляем файлы в корень
                     result.extend(file_symbols)
 
         log.debug(f"BSL: Built symbol tree from cache with {len(cached_files)} files in {len(directory_structure)} directories")
@@ -1824,12 +1788,32 @@ class BSLLanguageServer(SolidLanguageServer):
 
     def request_definition(self, relative_file_path: str, line: int, column: int) -> list[ls_types.Location]:
         """Resolve definition via local cache (no JAR/LSP)."""
-        symbol_name = self._get_symbol_name_at_position(relative_file_path, line, column)
+        qualifier, symbol_name = self._cursor_identifier_at_position(relative_file_path, line, column)
+        if not symbol_name:
+            symbol_name = self._get_symbol_name_at_position(relative_file_path, line, column)
         if not symbol_name:
             return []
 
+        matches = self._local_cache.find_methods({"name": symbol_name, "module": qualifier} if qualifier else {"name": symbol_name})
+
+        if qualifier and not matches:
+            name_matches = self._local_cache.find_methods({"name": symbol_name})
+            qualifier_lower = qualifier.lower()
+            matches = [
+                method_info
+                for method_info in name_matches
+                if method_info.module.lower() == qualifier_lower
+                or method_info.module.lower().endswith("." + qualifier_lower)
+                or qualifier_lower in pathlib.Path(method_info.filename).parts
+            ]
+
+        if not qualifier:
+            same_file = [method_info for method_info in matches if method_info.filename == relative_file_path]
+            if same_file:
+                matches = same_file
+
         locations: list[ls_types.Location] = []
-        for method_info in self._local_cache.find_methods({"name": symbol_name}):
+        for method_info in matches:
             abs_path = os.path.join(self.repository_root_path, method_info.filename)
             if not os.path.exists(abs_path):
                 continue
@@ -1989,20 +1973,89 @@ class BSLLanguageServer(SolidLanguageServer):
         log.info(f"Found {len(references)} references to '{symbol_name}' via local cache")
         return references
 
+    @staticmethod
+    def _is_bsl_identifier_char(char: str) -> bool:
+        return char.isalnum() or char == "_"
+
+    @staticmethod
+    def _identifier_span_at_column(line: str, column: int) -> tuple[int, int] | None:
+        """Return the [start, end) span of the BSL identifier at ``column``, if any."""
+        if not line:
+            return None
+
+        pos = column
+        if pos >= len(line):
+            pos = len(line) - 1
+        if pos < 0:
+            return None
+
+        if not BSLLanguageServer._is_bsl_identifier_char(line[pos]):
+            if pos > 0 and BSLLanguageServer._is_bsl_identifier_char(line[pos - 1]):
+                pos -= 1
+            else:
+                return None
+
+        start = pos
+        while start > 0 and BSLLanguageServer._is_bsl_identifier_char(line[start - 1]):
+            start -= 1
+        end = pos + 1
+        while end < len(line) and BSLLanguageServer._is_bsl_identifier_char(line[end]):
+            end += 1
+        return start, end
+
+    def _cursor_identifier_at_position(self, relative_file_path: str, line: int, column: int) -> tuple[str | None, str | None]:
+        """
+        Identifier at the cursor, with an optional module qualifier.
+
+        For ``ОбщийМодуль1.ВывестиСообщение`` with the cursor on the method name,
+        returns ``(ОбщийМодуль1, ВывестиСообщение)``.
+        """
+        abs_path = os.path.join(self.repository_root_path, relative_file_path)
+        if not os.path.exists(abs_path):
+            return None, None
+
+        try:
+            with open(abs_path, encoding=self._encoding, errors="ignore") as f:
+                file_lines = f.read().split("\n")
+        except OSError:
+            return None, None
+
+        if line < 0 or line >= len(file_lines):
+            return None, None
+
+        file_line = file_lines[line]
+        span = self._identifier_span_at_column(file_line, column)
+        if span is None:
+            return None, None
+
+        start, end = span
+        name = file_line[start:end]
+        if not name or not (name[0].isalpha() or name[0] == "_"):
+            return None, None
+
+        qualifier: str | None = None
+        if start >= 2 and file_line[start - 1] == ".":
+            qualifier_span = self._identifier_span_at_column(file_line, start - 2)
+            if qualifier_span is not None and qualifier_span[1] == start - 1:
+                qualifier = file_line[qualifier_span[0] : qualifier_span[1]]
+
+        return qualifier, name
+
     def _get_symbol_name_at_position(self, relative_file_path: str, line: int, column: int) -> str | None:
         """
-        Определяет имя символа по позиции в файле.
+        Identifier at the cursor, preferring the token under the caret over an enclosing method.
 
-        :param relative_file_path: Относительный путь к файлу
-        :param line: Номер строки (0-based)
-        :param column: Номер колонки (0-based)
-        :return: Имя символа или None, если не удалось определить
+        :param relative_file_path: relative path of the file
+        :param line: zero-based line
+        :param column: zero-based column
+        :return: identifier name, or None if none can be determined
         """
-        try:
-            # Получаем символы из кеша
-            document_symbols = self.request_document_symbols(relative_file_path)
+        _qualifier, identifier = self._cursor_identifier_at_position(relative_file_path, line, column)
+        if identifier:
+            return identifier
 
-            # Ищем символ, который содержит указанную позицию
+        try:
+            document_symbols = self.request_document_symbols(relative_file_path)
             for symbol in document_symbols.iter_symbols():
                 symbol_range = symbol.get("range")
                 if not symbol_range:
@@ -2013,51 +2066,16 @@ class BSLLanguageServer(SolidLanguageServer):
                 end_line = symbol_range["end"]["line"]
                 end_char = symbol_range["end"]["character"]
 
-                # Проверяем, находится ли позиция внутри символа
                 if start_line <= line <= end_line:
                     if line == start_line and column < start_char:
                         continue
                     if line == end_line and column > end_char:
                         continue
-
-                    # Нашли символ, возвращаем его имя
                     return symbol.get("name")
-
-            # Если не нашли символ в кеше, пытаемся определить по тексту файла
-            abs_path = os.path.join(self.repository_root_path, relative_file_path)
-            if os.path.exists(abs_path):
-                with open(abs_path, encoding="utf-8", errors="ignore") as f:
-                    file_lines = f.read().split("\n")
-
-                if line < len(file_lines):
-                    file_line = file_lines[line]
-                    # Пытаемся извлечь имя символа из позиции
-                    # Для BSL ищем идентификатор (начинается с буквы, содержит буквы, цифры и подчеркивания)
-                    if column < len(file_line):
-                        # Ищем начало идентификатора (двигаемся назад от позиции)
-                        start = column
-                        while start > 0 and (file_line[start - 1].isalnum() or file_line[start - 1] == "_"):
-                            start -= 1
-
-                        # Ищем конец идентификатора (двигаемся вперед от позиции)
-                        end = column
-                        while end < len(file_line) and (file_line[end].isalnum() or file_line[end] == "_"):
-                            end += 1
-
-                        if start < end:
-                            symbol_name = file_line[start:end]
-                            # Проверяем, что это валидный идентификатор (начинается с буквы)
-                            if symbol_name and (
-                                symbol_name[0].isalpha()
-                                or symbol_name[0] in "АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдеёжзийклмнопрстуфхцчшщъыьэюя"
-                            ):
-                                return symbol_name
-
-            return None
-
         except Exception as e:
-            log.debug(f"Failed to get symbol name at position {relative_file_path}:{line}:{column}: {e}")
-            return None
+            log.debug("Failed to get symbol name at position %s:%s:%s: %s", relative_file_path, line, column, e)
+
+        return None
 
     def insert_text_at_position(self, relative_file_path: str, line: int, column: int, text_to_be_inserted: str) -> ls_types.Position:
         """

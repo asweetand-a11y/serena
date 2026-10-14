@@ -51,7 +51,7 @@ class BSLModuleInfo:
     project: str = ""  # Путь к проекту
 
 
-@dataclass(eq=False, unsafe_hash=True)
+@dataclass(eq=False)
 class BSLMethodInfo:
     """Информация о методе с контекстом файла."""
 
@@ -295,10 +295,26 @@ class BSLCache:
         """
         Найти все вызовы процедуры/функции.
 
-        :param call_name: Имя вызываемой процедуры/функции
+        Matches an unqualified name against both bare calls and ``Module.Method`` keys.
+
+        :param call_name: Имя вызываемой процедуры/функции, optionally qualified
         :return: Список информации о вызовах
         """
-        return self.calls.get(call_name, []).copy()
+        results: list[BSLCallInfo] = []
+        seen: set[int] = set()
+        suffix = "." + call_name
+
+        for key, infos in self.calls.items():
+            if key != call_name and not key.endswith(suffix):
+                continue
+            for info in infos:
+                ident = id(info)
+                if ident in seen:
+                    continue
+                seen.add(ident)
+                results.append(info)
+
+        return results
 
     @_with_cache_lock
     def find_methods_by_module(self, module: str) -> list[BSLMethodInfo]:

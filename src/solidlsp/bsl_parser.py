@@ -21,9 +21,9 @@ class BSLParam:
 class BSLCallPosition:
     """Позиция вызова процедуры/функции в коде."""
 
-    call: str  # Имя вызываемой процедуры/функции
+    call: str  # Method name, or Qualifier.Method for dotted calls
     line: int  # Номер строки (0-based)
-    character: int  # Позиция символа в строке (0-based)
+    character: int  # Start of the method identifier (not the qualifier)  # Позиция символа в строке (0-based)
 
 
 @dataclass
@@ -85,8 +85,8 @@ class BSLParser:
     # Переменные модуля: Перем Имя [Экспорт];
     MODULE_VAR_PATTERN = re.compile(r"^\s*Перем\s+([а-яёА-ЯЁ\w]+)(?:\s+Экспорт)?\s*;", re.IGNORECASE | re.MULTILINE)
 
-    # Вызовы процедур/функций: ИмяПроцедуры( или ИмяПроцедуры()
-    CALL_PATTERN = re.compile(r"\b([а-яёА-ЯЁ\w]+)\s*\(", re.IGNORECASE)
+    # Calls: Method( or Qualifier.Method( or Type.Object.Method(
+    CALL_PATTERN = re.compile(r"\b((?:[а-яёА-ЯЁ\w]+\.)*)([а-яёА-ЯЁ\w]+)\s*\(", re.IGNORECASE)
 
     # Ключевые слова, которые не являются вызовами
     KEYWORDS = {
@@ -348,54 +348,47 @@ class BSLParser:
         description_lines.reverse()
         return "\n".join(description_lines).strip()
 
+    def _call_position_from_match(self, match: re.Match[str], line_num: int) -> BSLCallPosition | None:
+        """Build a call record from a CALL_PATTERN match, or None for keywords."""
+        prefix = match.group(1) or ""
+        method_name = match.group(2)
+        if method_name.lower() in self.KEYWORDS:
+            return None
+        call = f"{prefix}{method_name}" if prefix else method_name
+        return BSLCallPosition(call=call, line=line_num, character=match.start(2))
+
     def _parse_global_calls(self, source: str, lines: list[str], methods: list[BSLMethod]) -> list[BSLCallPosition]:
         """Извлекает вызовы процедур/функций на уровне модуля (вне методов)."""
         calls: list[BSLCallPosition] = []
 
-        # Определяем диапазоны строк, занятые методами
         method_ranges: set[int] = set()
         for method in methods:
             for line_num in range(method.line, method.endline + 1):
                 method_ranges.add(line_num)
 
-        # Ищем вызовы вне методов
         for line_num, line in enumerate(lines):
             if line_num in method_ranges:
                 continue
-
             for match in self.CALL_PATTERN.finditer(line):
-                call_name = match.group(1)
-
-                # Пропускаем ключевые слова
-                if call_name.lower() in self.KEYWORDS:
-                    continue
-
-                calls.append(BSLCallPosition(call=call_name, line=line_num, character=match.start()))
+                call_pos = self._call_position_from_match(match, line_num)
+                if call_pos is not None:
+                    calls.append(call_pos)
 
         return calls
 
     def _parse_method_calls(self, source: str, lines: list[str], method: BSLMethod) -> list[BSLCallPosition]:
         """Извлекает вызовы процедур/функций внутри метода."""
         calls: list[BSLCallPosition] = []
-
-        # Извлекаем код метода
         method_lines = lines[method.line : method.endline + 1]
 
-        # Ищем вызовы в коде метода
         for line_offset, line in enumerate(method_lines):
             line_num = method.line + line_offset
-
             for match in self.CALL_PATTERN.finditer(line):
-                call_name = match.group(1)
-
-                # Пропускаем ключевые слова
-                if call_name.lower() in self.KEYWORDS:
+                call_pos = self._call_position_from_match(match, line_num)
+                if call_pos is None:
                     continue
-
-                # Пропускаем вызов самого метода (рекурсия)
-                if call_name == method.name:
+                if call_pos.call.rsplit(".", 1)[-1] == method.name:
                     continue
-
-                calls.append(BSLCallPosition(call=call_name, line=line_num, character=match.start()))
+                calls.append(call_pos)
 
         return calls
