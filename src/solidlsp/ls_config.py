@@ -1,16 +1,21 @@
 """
 Configuration objects for language servers
 """
+# SPDX-License-Identifier: MIT
 
+from __future__ import annotations
+
+import importlib
 import logging
 import os
 import re
-from collections.abc import Iterable
+import threading
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from enum import Enum
 from functools import cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Self
+from typing import TYPE_CHECKING, Protocol, Self
 
 if TYPE_CHECKING:
     from solidlsp import SolidLanguageServer
@@ -87,9 +92,34 @@ class FilenameMatcher:
         return False
 
 
-class LanguageServerId(str, Enum):
+class LanguageServerIdLike(Protocol):
     """
-    Enumeration of language servers supported by SolidLSP.
+    Protocol defining the interface for language server identifiers,
+    which can be either a :class:`LanguageServerId` enum member or any other object that implements the same methods.
+    For language server adapters defined outside the SolidLSP library, use :class:`ExternalLanguageServerId`.
+    """
+
+    def get_key(self) -> str:
+        """
+        :return: the string key which identifies this language server in configuration files
+        """
+
+    def get_source_fn_matcher(self) -> FilenameMatcher:
+        pass
+
+    def get_ls_class(self) -> type["SolidLanguageServer"]:
+        pass
+
+    def get_priority(self) -> int:
+        pass
+
+    def supports_implementation_request(self) -> bool:
+        return self.get_ls_class().supports_implementation_request()
+
+
+class LanguageServerId(Enum):
+    """
+    Enumeration of language servers directly supported by SolidLSP.
     """
 
     CSHARP = "csharp"
@@ -104,6 +134,7 @@ class LanguageServerId(str, Enum):
     CPP = "cpp"
     CPP_CCLS = "cpp_ccls"
     PHP = "php"
+    PHP_DEVSENSE = "php_devsense"
     R = "r"
     PERL = "perl"
     CLOJURE = "clojure"
@@ -116,6 +147,8 @@ class LanguageServerId(str, Enum):
     CUE = "cue"
     ZIG = "zig"
     LUA = "lua"
+    LUA_EMMYLUA = "lua_emmylua"
+    """Experimental EmmyLua Analyzer Rust backend for Lua projects."""
     LUAU = "luau"
     """Luau Language Server for Roblox's Luau language (typed Lua 5.1 superset).
     Uses luau-lsp by JohnnyMorganz. Automatically downloads the binary if not found.
@@ -143,6 +176,11 @@ class LanguageServerId(str, Enum):
     """Svelte language server using svelte-language-server.
     Supports .svelte Single File Components plus TypeScript and JavaScript
     files in Svelte projects. Requires Node.js v18+ and npm.
+    """
+    ASTRO = "astro"
+    """Astro language server using @astrojs/language-server.
+    Supports .astro Single File Components plus TypeScript and JavaScript
+    files in Astro projects. Requires Node.js v18+ and npm.
     """
     POWERSHELL = "powershell"
     PASCAL = "pascal"
@@ -314,19 +352,23 @@ class LanguageServerId(str, Enum):
     """
 
     @classmethod
-    def iter_all(cls, include_experimental: bool = True, include_non_programming_languages: bool = True) -> Iterable[Self]:
+    def iter_all(
+        cls, include_experimental: bool = True, include_secondary: bool = True, include_non_programming_languages: bool = True
+    ) -> Iterable[Self]:
         for lang in cls:
             if include_experimental or not lang.is_experimental():
-                if include_non_programming_languages or lang.is_programming_language():
-                    yield lang
+                if include_secondary or not lang.is_secondary():
+                    if include_non_programming_languages or lang.is_programming_language():
+                        yield lang
 
-    def is_experimental(self) -> bool:
+    def get_key(self) -> str:
+        return self.value
+
+    def is_secondary(self) -> bool:
         """
-        Check if the language server is experimental (potentially not robust),
-        secondary (not default for respective language) or deprecated.
+        Check if the language server is secondary (not default for respective language/file extension).
         """
         return self in {
-            self.ANSIBLE,
             self.TYPESCRIPT_VTS,
             self.PYTHON_JEDI,
             self.PYTHON_TY,
@@ -336,19 +378,37 @@ class LanguageServerId(str, Enum):
             self.RUBY_SOLARGRAPH,
             self.PHP_PHPACTOR,
             self.PHP_PHPANTOM,
+            self.PHP_DEVSENSE,
             self.JULIA_FATOU,
-            self.MARKDOWN,
-            self.LATEX,
-            self.YAML,
-            self.JSON,
-            self.TOML,
-            self.GROOVY,
+            self.ANSIBLE,  # overlaps with YAML (same extension)
             self.CPP_CCLS,
+        }
+
+    def is_experimental(self) -> bool:
+        """
+        Check if the language server is experimental (potentially not robust)
+        and therefore should not be auto-enabled (explicit opt-in by user expected).
+        """
+        return self in {
+            self.GROOVY,
             self.SOLIDITY,
             self.HTML,
             self.SCSS,
             self.ANGULAR,
             self.DENO,
+            self.LUA_EMMYLUA,
+        }
+
+    def is_superset_language(self) -> bool:
+        """
+        Check if the language server is a superset of another language (e.g. Vue/Svelte are supersets of TypeScript/JavaScript).
+        This is used to assign lower priority to these languages when breaking ties between languages.
+        """
+        return self in {
+            self.VUE,  # superset of TypeScript/JavaScript
+            self.SVELTE,  # superset of TypeScript/JavaScript
+            self.ASTRO,  # superset of TypeScript/JavaScript
+            self.ANGULAR,  # superset of TypeScript/JavaScript
         }
 
     def is_programming_language(self) -> bool:
@@ -364,18 +424,17 @@ class LanguageServerId(str, Enum):
         """
         :return: priority of the language for breaking ties between languages; higher is more important.
         """
-        # experimental languages have the lowest priority
-        if self.is_experimental():
+        # experimental, secondary and non-programming languages have the lowest priority
+        # (Serena will not auto-enable them, and they will only be used if explicitly requested by the user)
+        if self.is_experimental() or self.is_secondary() or not self.is_programming_language():
             return 0
         # We assign lower priority to languages that are supersets of others, such that
         # the "larger" language is only chosen when it matches more strongly
-        match self:
-            # languages that are supersets of others (Vue/Svelte are supersets of TypeScript/JavaScript)
-            case self.VUE | self.SVELTE:
-                return 1
-            # regular languages
-            case _:
-                return 2
+        if self.is_superset_language():
+            return 1
+        # regular languages
+        else:
+            return 2
 
     def supports_implementation_request(self) -> bool:
         """
@@ -482,7 +541,7 @@ class LanguageServerId(str, Enum):
                 return FilenameMatcher(".kt", ".kts")
             case self.DART:
                 return FilenameMatcher(".dart")
-            case self.PHP | self.PHP_PHPACTOR | self.PHP_PHPANTOM:
+            case self.PHP | self.PHP_PHPACTOR | self.PHP_PHPANTOM | self.PHP_DEVSENSE:
                 # .phtml is a standard (yet outdated) extension for PHP sources
                 return FilenameMatcher(".php", ".phtml")
             case self.R:
@@ -513,7 +572,7 @@ class LanguageServerId(str, Enum):
                 return FilenameMatcher(".toml")
             case self.ZIG:
                 return FilenameMatcher(".zig", ".zon")
-            case self.LUA:
+            case self.LUA | self.LUA_EMMYLUA:
                 return FilenameMatcher(".lua")
             case self.LUAU:
                 return FilenameMatcher(".luau")
@@ -554,6 +613,12 @@ class LanguageServerId(str, Enum):
                 return FilenameMatcher(*path_patterns)
             case self.SVELTE:
                 path_patterns = [".svelte"]
+                for prefix in ["c", "m", ""]:
+                    for base_pattern in ["ts", "js"]:
+                        path_patterns.append(f".{prefix}{base_pattern}")
+                return FilenameMatcher(*path_patterns)
+            case self.ASTRO:
+                path_patterns = [".astro"]
                 for prefix in ["c", "m", ""]:
                     for base_pattern in ["ts", "js"]:
                         path_patterns.append(f".{prefix}{base_pattern}")
@@ -693,6 +758,10 @@ class LanguageServerId(str, Enum):
                 from solidlsp.language_servers.svelte_language_server import SvelteLanguageServer
 
                 return SvelteLanguageServer
+            case self.ASTRO:
+                from solidlsp.language_servers.astro_language_server import AstroLanguageServer
+
+                return AstroLanguageServer
             case self.GO:
                 from solidlsp.language_servers.gopls import Gopls
 
@@ -729,6 +798,10 @@ class LanguageServerId(str, Enum):
                 from solidlsp.language_servers.phpantom import PHPantomServer
 
                 return PHPantomServer
+            case self.PHP_DEVSENSE:
+                from solidlsp.language_servers.devsense_php_language_server import DevsensePHPLanguageServer
+
+                return DevsensePHPLanguageServer
             case self.PERL:
                 from solidlsp.language_servers.perl_language_server import PerlLanguageServer
 
@@ -789,6 +862,10 @@ class LanguageServerId(str, Enum):
                 from solidlsp.language_servers.lua_ls import LuaLanguageServer
 
                 return LuaLanguageServer
+            case self.LUA_EMMYLUA:
+                from solidlsp.language_servers.emmylua_ls import EmmyLuaLanguageServer
+
+                return EmmyLuaLanguageServer
 
             case self.LUAU:
                 from solidlsp.language_servers.luau_lsp import LuauLanguageServer
@@ -938,19 +1015,136 @@ class LanguageServerId(str, Enum):
             case _:
                 raise ValueError(f"Unhandled language: {self}")
 
-    @classmethod
-    def from_ls_class(cls, ls_class: type["SolidLanguageServer"]) -> Self:
-        """
-        Get the Language enum value from a SolidLanguageServer class.
 
-        :param ls_class: The SolidLanguageServer class to find the corresponding Language for
-        :return: The Language enum value
-        :raises ValueError: If the language server class is not supported
+class ExternalLanguageServerId(LanguageServerIdLike):
+    """
+    Represents an identifier for a language server that is externally provided and registered.
+    """
+
+    def __init__(self, key: str, matcher: FilenameMatcher, implementation: type["SolidLanguageServer"], priority: int = 0):
+        self._key = key
+        self._matcher = matcher
+        self._implementation = implementation
+        self._priority = priority
+
+    def get_key(self) -> str:
+        return self._key
+
+    def get_source_fn_matcher(self) -> FilenameMatcher:
+        return self._matcher
+
+    def get_ls_class(self) -> type["SolidLanguageServer"]:
+        return self._implementation
+
+    def get_priority(self) -> int:
         """
-        for enum_instance in cls:
-            if enum_instance.get_ls_class() == ls_class:
-                return enum_instance
-        raise ValueError(f"Unhandled language server class: {ls_class}")
+        Gets the priority of the language server for determining which languages are considered for
+        auto-detection and for breaking ties between languages.
+        Specifically, 0 used for experimentaL/secondary/non-programming languages, which are not
+        considered for auto-detection and only used if explicitly requested by the user.
+        1 used for superset languages, which are considered for auto-detection but have lower priority than regular languages
+        (such that they will be selected only if the match a greater number of files than the other language).
+        2 used for regular languages.
+
+        :return: the priority (higher is more important)
+        """
+        return self._priority
+
+
+class LanguageServerRegistry:
+    """
+    Registry of language servers
+    """
+
+    REGISTRATION_ENTRY_POINT_GROUP = "solidlsp.language_server_registration"
+    """
+    entry point group for language server registration functions; each function should call use 
+    `LanguageServerRegistry.get_instance().register(...)` to register a language server
+    """
+
+    _instance = None
+    _instance_lock = threading.Lock()
+
+    @classmethod
+    def get_instance(cls):
+        if cls._instance is None:
+            with cls._instance_lock:
+                if cls._instance is None:
+                    cls._instance = cls(True)
+                    cls._discover_language_server_registrations_from_entry_points()
+        return cls._instance
+
+    def __init__(self, _singleton: bool):
+        if not _singleton:
+            raise RuntimeError("LanguageServerRegistry is a singleton. Use get_instance() to access it.")
+        self._registered_language_servers: dict[str, LanguageServerIdLike] = {}
+
+        # auto-register built-in language servers
+        for ls_id in LanguageServerId:
+            self._registered_language_servers[ls_id.get_key()] = ls_id
+
+    @classmethod
+    def _discover_language_server_registrations_from_entry_points(cls) -> None:
+        """
+        Discover and execute language server adapter registration functions from entry points.
+        """
+        log.debug("Discovering language server registration entry points ...")
+        try:
+            entry_points = importlib.metadata.entry_points(group=cls.REGISTRATION_ENTRY_POINT_GROUP)
+        except Exception as error:
+            log.exception("Failed to discover language server registration entry points: %s", error)
+            return
+
+        def get_distribution_name(ep: importlib.metadata.EntryPoint) -> str:
+            distribution = getattr(ep, "dist", None)
+            if distribution is None:
+                return "unknown distribution"
+            return distribution.name or "unknown distribution"
+
+        log.debug("Found %d language server registration entry points", len(entry_points))
+        for entry_point in entry_points:
+            try:
+                registration = entry_point.load()
+                if not callable(registration):
+                    raise TypeError("entry point must resolve to a callable registration function")
+                registration()
+            except Exception as error:
+                log.exception(
+                    "Failed to load language server adapter entry point '%s' from %s: %s",
+                    entry_point.name,
+                    get_distribution_name(entry_point),
+                    error,
+                )
+
+    def resolve(self, key: str) -> LanguageServerIdLike:
+        if key in self._registered_language_servers:
+            return self._registered_language_servers[key]
+        raise ValueError(f"Unknown language server key: '{key}'; Valid keys: {self.get_keys()}")
+
+    def iter_registered_ls_ids(self) -> Iterator[LanguageServerIdLike]:
+        """
+        Iterate over all registered language servers (built-in + externally-registered via
+        entry points). Order follows ``get_keys()`` (alphabetical).
+        """
+        for key in self.get_keys():
+            yield self._registered_language_servers[key]
+
+    def register(self, ls_id: LanguageServerIdLike, allow_override: bool = False) -> None:
+        """
+        :param ls_id: the identifier to register
+        :param allow_override: whether to allow overriding an existing registration with the same key
+        """
+        log.info("Registering language server: %s (class=%s)", ls_id.get_key(), ls_id.get_ls_class().__name__)
+        key = ls_id.get_key()
+        if key in self._registered_language_servers and not allow_override:
+            raise ValueError(f"Language server id is already registered: {key}")
+        self._registered_language_servers[key] = ls_id
+
+    def get_keys(self) -> list[str]:
+        """
+        :return: the sorted list of all registered string keys
+        """
+        return sorted(self._registered_language_servers.keys())
 
 
 @dataclass(frozen=True)
@@ -959,7 +1153,7 @@ class LanguageServerConfig:
     Configuration parameters for a language server instance
     """
 
-    ls_id: LanguageServerId
+    ls_id: LanguageServerIdLike
     """
     defines the language server to use
     """

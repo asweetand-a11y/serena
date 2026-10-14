@@ -2,6 +2,7 @@
 In-memory кеш для BSL символов (аналог LokiJS).
 Предоставляет быстрый поиск и индексацию символов.
 """
+# SPDX-License-Identifier: MIT
 
 import re
 import threading
@@ -22,6 +23,7 @@ def _with_cache_lock(method: Callable[..., _R]) -> Callable[..., _R]:
             return method(self, *args, **kwargs)
 
     return wrapper
+
 
 from solidlsp.bsl_parser import BSLCallPosition, BSLMethod, BSLModuleVar
 

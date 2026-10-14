@@ -11,6 +11,7 @@ Optional ls_specific_settings (in serena_config.yml):
         file_read_parallelism: 500
         cache_update_start_delay_seconds: 30
 """
+# SPDX-License-Identifier: MIT
 
 import hashlib
 import logging
@@ -446,7 +447,7 @@ class BSLLanguageServer(SolidLanguageServer):
 
         log.info("Loading document symbols cache from %s", cache_file)
         try:
-            saved_cache = load_cache(str(cache_file), self._document_symbols_cache_version())
+            saved_cache = load_cache(str(cache_file), self._document_symbols_cache_version(), loader=self._cache_loader)
             if saved_cache is not None:
                 self._document_symbols_cache = saved_cache
                 log.info("Loaded %d entries from document symbols cache.", len(self._document_symbols_cache))
@@ -820,8 +821,8 @@ class BSLLanguageServer(SolidLanguageServer):
             # Создаем file_range
             file_range = self._get_range_from_file_content(file_content)
 
-            # Получаем корневые символы из document_symbols
-            file_root_nodes = document_symbols.root_symbols
+            # shallow copies so linking parent does not mutate the cached document symbols (#2126)
+            file_root_nodes = [r.copy() for r in document_symbols.root_symbols]
 
             # Создаем символ файла
             file_symbol = ls_types.UnifiedSymbolInformation(

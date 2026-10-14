@@ -2,6 +2,7 @@
 Vue Language Server implementation using @vue/language-server (Volar) with companion TypeScript LS.
 Operates in hybrid mode: Vue LS handles .vue files, TypeScript LS handles .ts/.js files.
 """
+# SPDX-License-Identifier: MIT
 
 import logging
 import os
@@ -36,17 +37,6 @@ log = logging.getLogger(__name__)
 
 class VueTypeScriptServer(TypeScriptLanguageServer):
     """TypeScript LS configured with @vue/typescript-plugin for Vue file support."""
-
-    @classmethod
-    @override
-    def get_language_server_id(cls) -> LanguageServerId:
-        """Return TYPESCRIPT since this is a TypeScript language server variant.
-
-        Note: VueTypeScriptServer is a companion server that uses TypeScript's language server
-        with the Vue TypeScript plugin. It reports as TYPESCRIPT to maintain compatibility
-        with the TypeScript language server infrastructure.
-        """
-        return LanguageServerId.TYPESCRIPT
 
     def get_source_fn_matcher(self) -> FilenameMatcher:
         # must override with Vue-specific matcher to ensure .vue files are included (as they can be discovered via references,
@@ -86,9 +76,13 @@ class VueTypeScriptServer(TypeScriptLanguageServer):
         ext = os.path.splitext(relative_file_path)[1].lower()
         if ext == ".vue":
             return "vue"
-        elif ext in (".ts", ".tsx", ".mts", ".cts"):
+        elif ext == ".tsx":
+            return "typescriptreact"
+        elif ext == ".jsx":
+            return "javascriptreact"
+        elif ext in (".ts", ".mts", ".cts"):
             return "typescript"
-        elif ext in (".js", ".jsx", ".mjs", ".cjs"):
+        elif ext in (".js", ".mjs", ".cjs"):
             return "javascript"
         else:
             return "typescript"
@@ -243,9 +237,13 @@ class VueLanguageServer(SolidLanguageServer):
         ext = os.path.splitext(relative_file_path)[1].lower()
         if ext == ".vue":
             return "vue"
-        elif ext in (".ts", ".tsx", ".mts", ".cts"):
+        elif ext == ".tsx":
+            return "typescriptreact"
+        elif ext == ".jsx":
+            return "javascriptreact"
+        elif ext in (".ts", ".mts", ".cts"):
             return "typescript"
-        elif ext in (".js", ".jsx", ".mjs", ".cjs"):
+        elif ext in (".js", ".mjs", ".cjs"):
             return "javascript"
         else:
             return "vue"
@@ -261,7 +259,7 @@ class VueLanguageServer(SolidLanguageServer):
         for vue_file in repo_path.rglob("*.vue"):
             try:
                 relative_path = str(vue_file.relative_to(repo_path))
-                if "node_modules" not in relative_path and not relative_path.startswith("."):
+                if not relative_path.startswith(".") and not self.is_ignored_path(relative_path):
                     vue_files.append(relative_path)
             except Exception as e:
                 log.debug(f"Error processing Vue file {vue_file}: {e}")

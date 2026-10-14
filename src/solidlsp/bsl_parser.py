@@ -2,6 +2,7 @@
 Python парсер BSL кода для массовой индексации.
 Аналог onec-syntaxparser, но полностью на Python.
 """
+# SPDX-License-Identifier: MIT
 
 import re
 from dataclasses import dataclass, field
